@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BookOpen, CheckCircle, Clock, GraduationCap, LayoutDashboard, 
   LogOut, Plus, Settings, Calendar as CalendarIcon, 
-  ChevronRight, Trash2, X, Download, Wrench, 
+  ChevronRight, ChevronLeft, Trash2, X, Download, Wrench, 
   Printer, FileText, Lock, Shield, Key, Save,
   AlertTriangle, ExternalLink
 } from 'lucide-react';
 
 /* GRADE TRACKER FRONTEND (Local "Pro" Version)
-   Features: Local Node Backend + Advanced Grading/Reporting
+   Features: Local Node Backend + Advanced Grading/Reporting + Full Calendar
 */
 
 // --- Configuration & Defaults ---
@@ -38,9 +38,11 @@ const Badge = ({ status }) => {
     'TODO': 'bg-gray-100 text-gray-600 border-gray-200',
     'IN_PROGRESS': 'bg-blue-100 text-blue-700 border-blue-200',
     'TURNED_IN': 'bg-yellow-100 text-yellow-800 border-yellow-200',
-    'GRADED': 'bg-green-100 text-green-700 border-green-200'
+    'GRADED': 'bg-green-100 text-green-700 border-green-200',
+    'EXAM': 'bg-red-50 text-red-700 border-red-200',
+    'EVENT': 'bg-purple-50 text-purple-700 border-purple-200'
   };
-  return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[status]}`}>{status.replace('_', ' ')}</span>;
+  return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[status] || styles['TODO']}`}>{status.replace('_', ' ')}</span>;
 };
 
 // --- Main Application ---
@@ -62,6 +64,7 @@ export default function GradeTracker() {
   const [view, setView] = useState('DASHBOARD');
   const [activeClassId, setActiveClassId] = useState(null);
   const [activeAssignment, setActiveAssignment] = useState(null);
+  const [currentDate, setCurrentDate] = useState(new Date()); // Calendar
   
   // Modals
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -91,6 +94,15 @@ export default function GradeTracker() {
           events: overrideData?.events ?? events
       };
       await apiCall('/data', 'POST', dbPayload);
+  };
+
+  const handleUpdatePassword = async (newPass) => {
+      try {
+          await apiCall('/change-password', 'POST', { newPassword: newPass });
+          alert("Password updated successfully.");
+      } catch (e) {
+          alert("Failed to update password.");
+      }
   };
 
   // --- Initialization ---
@@ -139,7 +151,7 @@ export default function GradeTracker() {
         return (a.status === 'GRADED' || a.status === 'TURNED_IN' || (a.dueDate && a.dueDate < now));
     });
 
-    // Apply "Drop Lowest" Rules
+    // Apply "Rules"
     if (cls.rules && cls.rules.length > 0) {
         cls.rules.forEach(rule => {
             if (rule.type === 'DROP_LOWEST') {
@@ -162,7 +174,15 @@ export default function GradeTracker() {
     const rawTotalPoints = classAssignments.reduce((acc, curr) => acc + (parseFloat(curr.total) || 0), 0);
     const rawEarnedPoints = classAssignments.reduce((acc, curr) => acc + (parseFloat(curr.grade) || 0), 0);
 
-    if (cls.gradingType === 'WEIGHTED' && cls.categories && cls.categories.length > 0) {
+    if (cls.gradingType === 'CUSTOM' && cls.customScript) {
+        try {
+            // Simplified "No Code" logic placeholder - customScript currently stores text for now
+            // For full execution, we'd need eval() which is risky, or a parser.
+            // Falling back to Points for safety in this version unless explicit safe parser added.
+            finalPercent = rawTotalPoints === 0 ? 100 : (rawEarnedPoints / rawTotalPoints) * 100;
+        } catch(e) { console.error(e); }
+    }
+    else if (cls.gradingType === 'WEIGHTED' && cls.categories && cls.categories.length > 0) {
         let totalWeightedScore = 0;
         let totalWeightUsed = 0;
         cls.categories.forEach(cat => {
@@ -234,12 +254,27 @@ export default function GradeTracker() {
       setIsEditModalOpen(false);
   };
 
+  const handleCreateEvent = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const newEvent = {
+          id: crypto.randomUUID(),
+          title: fd.get('title'),
+          date: fd.get('date'),
+          type: fd.get('type'),
+          description: fd.get('description')
+      };
+      setEvents([...events, newEvent]);
+      await saveData({ events: [...events, newEvent] });
+      setIsEventModalOpen(false);
+  };
+
   // --- Sub-Components (Modals) ---
 
   const ClassSettingsModal = () => {
       const cls = classes.find(c => c.id === activeClassId);
       if(!cls) return null;
-      const [localSettings, setLocalSettings] = useState({...cls});
+      const [localSettings, setLocalSettings] = useState({...cls, gradingScale: cls.gradingScale || DEFAULT_GRADING_SCALE});
       const [tab, setTab] = useState('GENERAL');
 
       const addCategory = () => setLocalSettings({...localSettings, categories: [...(localSettings.categories||[]), {name: 'New', weight: 0}]});
@@ -252,21 +287,37 @@ export default function GradeTracker() {
           setLocalSettings({...localSettings, categories: cats});
       };
 
+      const updateScale = (i, f, v) => {
+          const sc = [...localSettings.gradingScale]; sc[i][f] = v;
+          setLocalSettings({...localSettings, gradingScale: sc});
+      };
+
+      const addRule = () => setLocalSettings({...localSettings, rules: [...(localSettings.rules||[]), {type: 'DROP_LOWEST', count: 1, category: 'Homework'}]});
+      const updateRule = (i, f, v) => {
+          const rs = [...localSettings.rules]; rs[i][f] = v;
+          setLocalSettings({...localSettings, rules: rs});
+      };
+      const removeRule = (i) => {
+          const rs = localSettings.rules.filter((_, idx) => idx !== i);
+          setLocalSettings({...localSettings, rules: rs});
+      };
+
       return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white w-full max-w-2xl rounded-xl shadow-xl flex flex-col max-h-[90vh]">
+            <div className="bg-white w-full max-w-3xl rounded-xl shadow-xl flex flex-col max-h-[90vh]">
                 <div className="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-xl">
                     <h3 className="font-bold text-lg">Class Settings: {cls.name}</h3>
                     <button onClick={() => setIsClassSettingsOpen(false)}><X size={20}/></button>
                 </div>
-                <div className="flex border-b">
-                    {['GENERAL', 'GRADING', 'SCALE', 'DANGER'].map(t => (
-                        <button key={t} onClick={()=>setTab(t)} className={`px-4 py-2 text-sm font-bold ${tab===t?'border-b-2 border-blue-600 text-blue-600':'text-gray-500'}`}>{t}</button>
+                <div className="flex border-b overflow-x-auto">
+                    {['GENERAL', 'GRADING', 'SCALE', 'RULES', 'DANGER'].map(t => (
+                        <button key={t} onClick={()=>setTab(t)} className={`px-4 py-3 text-sm font-bold whitespace-nowrap ${tab===t?'border-b-2 border-blue-600 text-blue-600':'text-gray-500'}`}>{t}</button>
                     ))}
                 </div>
                 <div className="p-6 overflow-y-auto flex-1">
                     {tab === 'GENERAL' && (
                         <div className="space-y-4">
+                            <label className="block text-sm font-bold text-gray-700">Class Information</label>
                             <input value={localSettings.name} onChange={e=>setLocalSettings({...localSettings, name: e.target.value})} className="border p-2 w-full rounded" placeholder="Class Name"/>
                             <div className="grid grid-cols-2 gap-4">
                                 <input value={localSettings.code} onChange={e=>setLocalSettings({...localSettings, code: e.target.value})} className="border p-2 w-full rounded" placeholder="Code"/>
@@ -275,36 +326,88 @@ export default function GradeTracker() {
                         </div>
                     )}
                     {tab === 'GRADING' && (
-                        <div className="space-y-4">
-                            <div className="flex gap-4 mb-4">
-                                <button onClick={()=>setLocalSettings({...localSettings, gradingType: 'POINTS'})} className={`flex-1 p-2 border rounded ${localSettings.gradingType==='POINTS'?'bg-blue-50 border-blue-500 text-blue-700':''}`}>Total Points</button>
-                                <button onClick={()=>setLocalSettings({...localSettings, gradingType: 'WEIGHTED'})} className={`flex-1 p-2 border rounded ${localSettings.gradingType==='WEIGHTED'?'bg-blue-50 border-blue-500 text-blue-700':''}`}>Weighted</button>
+                        <div className="space-y-6">
+                            <div className="flex gap-4">
+                                {['POINTS', 'WEIGHTED', 'CUSTOM'].map(type => (
+                                    <button key={type} onClick={()=>setLocalSettings({...localSettings, gradingType: type})} 
+                                        className={`flex-1 p-3 rounded border text-center font-bold ${localSettings.gradingType===type ? 'bg-blue-50 border-blue-600 text-blue-700' : 'border-gray-200 text-gray-500'}`}>
+                                        {type === 'POINTS' && "Total Points"}
+                                        {type === 'WEIGHTED' && "Weighted"}
+                                        {type === 'CUSTOM' && "Custom Logic"}
+                                    </button>
+                                ))}
                             </div>
+
                             {localSettings.gradingType === 'WEIGHTED' && (
-                                <div>
-                                    <div className="flex justify-between mb-2"><span className="font-bold text-sm">Categories</span><button onClick={addCategory} className="text-blue-600 text-xs">+ Add</button></div>
+                                <div className="bg-gray-50 p-4 rounded border">
+                                    <div className="flex justify-between mb-2"><span className="font-bold text-sm">Weighted Categories</span><button onClick={addCategory} className="text-blue-600 text-xs font-bold">+ ADD CATEGORY</button></div>
                                     {localSettings.categories?.map((cat, i) => (
-                                        <div key={i} className="flex gap-2 mb-2">
-                                            <input value={cat.name} onChange={e=>updateCat(i, 'name', e.target.value)} className="border p-1 flex-1 rounded"/>
-                                            <input type="number" value={cat.weight} onChange={e=>updateCat(i, 'weight', e.target.value)} className="border p-1 w-16 rounded"/>
-                                            <button onClick={()=>removeCat(i)} className="text-red-500"><Trash2 size={16}/></button>
+                                        <div key={i} className="flex gap-2 mb-2 items-center">
+                                            <input value={cat.name} onChange={e=>updateCat(i, 'name', e.target.value)} className="border p-1 flex-1 rounded text-sm" placeholder="Name"/>
+                                            <div className="flex items-center gap-1"><input type="number" value={cat.weight} onChange={e=>updateCat(i, 'weight', e.target.value)} className="border p-1 w-16 rounded text-right text-sm"/><span className="text-sm">%</span></div>
+                                            <button onClick={()=>removeCat(i)} className="text-red-400 p-1 hover:text-red-600"><Trash2 size={16}/></button>
                                         </div>
                                     ))}
-                                    <div className="text-right text-xs text-gray-500">Total: {localSettings.categories?.reduce((a,b)=>a+(parseFloat(b.weight)||0),0)}%</div>
+                                    <div className="text-right text-xs font-bold text-gray-500 mt-2">Total Weight: {localSettings.categories?.reduce((a,b)=>a+(parseFloat(b.weight)||0),0)}%</div>
+                                </div>
+                            )}
+                            
+                            {localSettings.gradingType === 'CUSTOM' && (
+                                <div className="bg-yellow-50 p-4 rounded border border-yellow-200">
+                                    <p className="text-sm text-yellow-800 font-medium mb-2"><AlertTriangle size={16} className="inline mr-1"/> Custom Logic</p>
+                                    <textarea 
+                                        value={localSettings.customScript || ''} 
+                                        onChange={e=>setLocalSettings({...localSettings, customScript: e.target.value})}
+                                        className="w-full h-32 p-2 border rounded font-mono text-xs"
+                                        placeholder="// Enter custom logic description or code snippet here..."
+                                    />
                                 </div>
                             )}
                         </div>
                     )}
+                    {tab === 'SCALE' && (
+                        <div className="space-y-4">
+                            <p className="text-sm text-gray-500">Define percentage cutoffs for each letter grade.</p>
+                            <div className="grid grid-cols-3 gap-2 font-bold text-xs text-gray-400 uppercase"><div>Letter</div><div>Min %</div><div>GPA</div></div>
+                            {localSettings.gradingScale.map((s, i) => (
+                                <div key={i} className="grid grid-cols-3 gap-4">
+                                    <div className="p-2 bg-gray-100 rounded text-center font-bold text-gray-700">{s.letter}</div>
+                                    <input type="number" value={s.min} onChange={e => updateScale(i, 'min', e.target.value)} className="p-2 border rounded" />
+                                    <input type="number" value={s.gpa} onChange={e => updateScale(i, 'gpa', e.target.value)} className="p-2 border rounded" step="0.1" />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {tab === 'RULES' && (
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-center"><p className="text-sm text-gray-500">Special Grading Rules</p><button onClick={addRule} className="text-blue-600 text-xs font-bold">+ ADD RULE</button></div>
+                            {localSettings.rules?.map((rule, i) => (
+                                <div key={i} className="bg-gray-50 p-3 rounded border flex justify-between items-center">
+                                    <div className="flex items-center gap-2 text-sm">
+                                        <span>Drop Lowest</span>
+                                        <input type="number" value={rule.count} onChange={e=>updateRule(i, 'count', e.target.value)} className="w-12 p-1 border rounded text-center"/>
+                                        <span>from</span>
+                                        <select value={rule.category} onChange={e=>updateRule(i, 'category', e.target.value)} className="p-1 border rounded bg-white">
+                                            {localSettings.categories?.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <button onClick={()=>removeRule(i)}><X size={16} className="text-gray-400 hover:text-red-500"/></button>
+                                </div>
+                            ))}
+                            {(!localSettings.rules || localSettings.rules.length === 0) && <p className="text-center text-gray-400 text-sm italic">No rules defined.</p>}
+                        </div>
+                    )}
                     {tab === 'DANGER' && (
-                        <div className="bg-red-50 p-4 rounded text-center">
-                            <p className="text-red-600 text-sm mb-2">Delete class and all data?</p>
-                            <button onClick={()=>handleDeleteClass(localSettings.id)} className="bg-red-600 text-white px-4 py-2 rounded">Delete Class</button>
+                        <div className="bg-red-50 p-6 rounded text-center border border-red-100">
+                            <h4 className="text-red-800 font-bold mb-2">Delete Class</h4>
+                            <p className="text-red-600 text-sm mb-4">This action cannot be undone.</p>
+                            <button onClick={()=>handleDeleteClass(localSettings.id)} className="bg-red-600 text-white px-6 py-2 rounded font-bold hover:bg-red-700">Delete Permanently</button>
                         </div>
                     )}
                 </div>
                 <div className="p-4 border-t flex justify-end gap-2 bg-gray-50 rounded-b-xl">
-                    <button onClick={()=>setIsClassSettingsOpen(false)} className="px-4 py-2 text-gray-600">Cancel</button>
-                    <button onClick={()=>handleUpdateClass(localSettings)} className="px-4 py-2 bg-blue-600 text-white rounded font-bold">Save Changes</button>
+                    <button onClick={()=>setIsClassSettingsOpen(false)} className="px-4 py-2 text-gray-600 font-medium">Cancel</button>
+                    <button onClick={()=>handleUpdateClass(localSettings)} className="px-6 py-2 bg-blue-600 text-white rounded font-bold shadow hover:bg-blue-700">Save Changes</button>
                 </div>
             </div>
         </div>
@@ -320,7 +423,6 @@ export default function GradeTracker() {
           return acc;
       }, { 'TODO': 0, 'IN_PROGRESS': 0, 'TURNED_IN': 0, 'GRADED': 0 });
       
-      // Conic Gradient for Chart
       const total = Object.values(statusCounts).reduce((a,b)=>a+b, 0);
       const colors = { 'TODO': '#fbbf24', 'IN_PROGRESS': '#3b82f6', 'TURNED_IN': '#f59e0b', 'GRADED': '#10b981' };
       let gradStr = "", acc = 0;
@@ -334,45 +436,52 @@ export default function GradeTracker() {
       return (
           <div className="space-y-8 animate-fade-in print:w-full">
               <div className="flex justify-between items-center print:hidden">
-                  <h2 className="text-2xl font-bold">Performance Report</h2>
-                  <button onClick={() => window.print()} className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-900"><Printer size={16}/> Print</button>
+                  <h2 className="text-2xl font-bold text-slate-800">Performance Report</h2>
+                  <button onClick={() => window.print()} className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-900 shadow"><Printer size={16}/> Print Report</button>
               </div>
-              <div className="bg-white p-8 rounded-xl shadow border print:shadow-none print:border-none">
-                  <div className="flex justify-between border-b pb-6 mb-6">
-                      <div>
-                          <h1 className="text-2xl font-bold text-slate-800">{universityName}</h1>
-                          <p className="text-sm text-slate-500">Student Success Portal</p>
+              <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 print:shadow-none print:border-none">
+                  <div className="flex justify-between border-b border-slate-100 pb-6 mb-6">
+                      <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-blue-900 rounded-lg flex items-center justify-center text-white font-bold text-xl">{universityName.charAt(0)}</div>
+                          <div>
+                              <h1 className="text-2xl font-bold text-slate-800">{universityName}</h1>
+                              <p className="text-sm text-slate-500">Student Success Portal</p>
+                          </div>
                       </div>
                       <div className="text-right text-xs text-slate-400">Generated: {new Date().toLocaleDateString()}</div>
                   </div>
                   
                   {/* KPIs */}
-                  <div className="grid grid-cols-4 gap-6 mb-8">
-                      <div className="p-4 bg-slate-50 rounded border">
-                          <div className="text-xs text-slate-400 uppercase font-bold">GPA</div>
-                          <div className="text-3xl font-bold text-blue-800">{getCumulativeGPA()}</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-10">
+                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+                          <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">GPA</div>
+                          <div className="text-3xl font-bold text-blue-800 mt-1">{getCumulativeGPA()}</div>
                       </div>
-                      <div className="p-4 bg-slate-50 rounded border">
-                          <div className="text-xs text-slate-400 uppercase font-bold">Credits</div>
-                          <div className="text-3xl font-bold text-slate-800">{classes.reduce((a,c)=>a+(parseFloat(c.credits)||0),0)}</div>
+                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+                          <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Credits</div>
+                          <div className="text-3xl font-bold text-slate-800 mt-1">{classes.reduce((a,c)=>a+(parseFloat(c.credits)||0),0)}</div>
                       </div>
-                      <div className="p-4 bg-slate-50 rounded border">
-                          <div className="text-xs text-slate-400 uppercase font-bold">Completion</div>
-                          <div className="text-3xl font-bold text-slate-800">{total===0?0:Math.round((gradedCount/total)*100)}%</div>
+                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+                          <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Assignments</div>
+                          <div className="text-3xl font-bold text-slate-800 mt-1">{totalAssigns}</div>
+                      </div>
+                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+                          <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Completion</div>
+                          <div className="text-3xl font-bold text-slate-800 mt-1">{total===0?0:Math.round((gradedCount/total)*100)}%</div>
                       </div>
                   </div>
 
                   {/* Visuals */}
-                  <div className="grid grid-cols-2 gap-8 mb-8">
-                      <div className="p-6 border rounded">
-                          <h4 className="font-bold mb-4">Grade Breakdown</h4>
-                          <div className="space-y-3">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                      <div className="p-6 border border-slate-200 rounded-xl">
+                          <h4 className="font-bold text-slate-800 mb-6">Grade Breakdown</h4>
+                          <div className="space-y-4">
                               {classes.map(c => {
                                   const s = calculateClassGrade(c.id);
                                   return (
                                       <div key={c.id}>
-                                          <div className="flex justify-between text-xs mb-1"><span className="font-bold">{c.code}</span><span>{s.percent.toFixed(1)}%</span></div>
-                                          <div className="h-4 w-full bg-slate-100 rounded overflow-hidden">
+                                          <div className="flex justify-between text-xs mb-1 font-medium"><span className="text-slate-700">{c.name}</span><span className="text-slate-500">{s.percent.toFixed(1)}% ({s.letter})</span></div>
+                                          <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden">
                                               <div className="h-full bg-blue-600" style={{width: `${s.percent}%`}}></div>
                                           </div>
                                       </div>
@@ -380,14 +489,18 @@ export default function GradeTracker() {
                               })}
                           </div>
                       </div>
-                      <div className="p-6 border rounded flex flex-col items-center justify-center">
-                          <h4 className="font-bold mb-4 w-full text-left">Workload</h4>
-                          <div className="w-32 h-32 rounded-full relative" style={{background: `conic-gradient(${gradStr})`}}>
-                              <div className="absolute inset-4 bg-white rounded-full flex items-center justify-center font-bold text-xl">{totalAssigns}</div>
+                      <div className="p-6 border border-slate-200 rounded-xl flex flex-col items-center justify-center">
+                          <h4 className="font-bold text-slate-800 mb-6 w-full text-left">Workload Distribution</h4>
+                          <div className="w-40 h-40 rounded-full relative shadow-inner" style={{background: `conic-gradient(${gradStr})`}}>
+                              <div className="absolute inset-6 bg-white rounded-full flex flex-col items-center justify-center shadow-sm">
+                                  <span className="text-2xl font-bold text-slate-800">{totalAssigns}</span>
+                                  <span className="text-xs text-slate-400 uppercase">Items</span>
+                              </div>
                           </div>
-                          <div className="flex gap-4 mt-4 text-xs">
-                              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500"></div>Graded</div>
-                              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-yellow-400"></div>Todo</div>
+                          <div className="flex flex-wrap gap-4 mt-6 text-xs justify-center">
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500"></div>Graded</div>
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-400"></div>Todo</div>
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div>In Progress</div>
                           </div>
                       </div>
                   </div>
@@ -397,22 +510,50 @@ export default function GradeTracker() {
   };
 
   const CalendarView = () => {
-      // Simple list view for now, effectively serves as a timeline
-      const sorted = assignments.filter(a => a.dueDate).sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate));
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const firstDay = new Date(year, month, 1).getDay();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+      const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+      const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
+
       return (
           <div className="space-y-6">
-              <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Calendar Timeline</h2></div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {sorted.map(a => (
-                      <div key={a.id} className="bg-white p-4 rounded shadow border border-l-4 border-l-blue-500">
-                          <div className="text-xs text-gray-500 mb-1">{a.dueDate}</div>
-                          <div className="font-bold">{a.name}</div>
-                          <div className="text-xs text-gray-400 mt-2 flex justify-between">
-                              <span>{classes.find(c=>c.id===a.classId)?.code}</span>
-                              <Badge status={a.status}/>
-                          </div>
-                      </div>
-                  ))}
+              <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><CalendarIcon className="text-blue-600"/> Academic Calendar</h2>
+                  <button onClick={() => setIsEventModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex items-center gap-2"><Plus size={16}/> Add Event</button>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="p-4 flex justify-between items-center bg-gray-50 border-b">
+                      <button onClick={prevMonth} className="p-2 hover:bg-white rounded-full"><ChevronLeft/></button>
+                      <h3 className="text-lg font-bold">{monthNames[month]} {year}</h3>
+                      <button onClick={nextMonth} className="p-2 hover:bg-white rounded-full"><ChevronRight/></button>
+                  </div>
+                  <div className="grid grid-cols-7 text-center bg-gray-100 text-xs font-bold text-gray-500 uppercase py-2">
+                      {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><div key={d}>{d}</div>)}
+                  </div>
+                  <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px">
+                      {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white min-h-[100px]"></div>)}
+                      {Array.from({length: daysInMonth}).map((_,i)=>{
+                          const d = i+1;
+                          const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                          const daysItems = [...assignments.filter(a=>a.dueDate===dateStr), ...events.filter(e=>e.date===dateStr)];
+                          return (
+                              <div key={d} className="bg-white min-h-[100px] p-2 hover:bg-blue-50 transition-colors group relative">
+                                  <div className={`text-sm font-bold mb-1 ${new Date().toDateString() === new Date(year,month,d).toDateString() ? 'text-blue-600':''}`}>{d}</div>
+                                  <div className="space-y-1">
+                                      {daysItems.map((item, idx) => (
+                                          <div key={idx} onClick={()=>{ if(item.grade!==undefined){setActiveAssignment(item); setIsEditModalOpen(true);} }} className={`text-[10px] px-1 rounded truncate cursor-pointer ${item.grade!==undefined ? (item.status==='GRADED'?'bg-green-100 text-green-800':'bg-blue-100 text-blue-800') : 'bg-purple-100 text-purple-800'}`}>
+                                              {item.name || item.title}
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+                          )
+                      })}
+                  </div>
               </div>
           </div>
       );
@@ -559,6 +700,14 @@ export default function GradeTracker() {
                   <h3 className="font-bold text-lg mb-4">Global Settings</h3>
                   <div className="space-y-4">
                       <div><label className="text-sm">University Name</label><input value={universityName} onChange={e=>setUniversityName(e.target.value)} className="border p-2 w-full rounded"/></div>
+                      <div className="border-t pt-4">
+                          <label className="text-sm block mb-2 font-bold">Change Password</label>
+                          <input type="password" id="newPass" placeholder="New Password" className="border p-2 w-full rounded mb-2"/>
+                          <button onClick={()=>{
+                              const pass = document.getElementById('newPass').value;
+                              if(pass) handleUpdatePassword(pass);
+                          }} className="bg-gray-800 text-white px-3 py-1 rounded text-xs">Update Password</button>
+                      </div>
                       <div className="flex justify-end gap-2 mt-4">
                           <button onClick={()=>setIsGlobalSettingsOpen(false)} className="px-4 py-2">Close</button>
                           <button onClick={() => { saveData({ universityName }); setIsGlobalSettingsOpen(false); }} className="bg-blue-600 text-white px-4 py-2 rounded">Save</button>
@@ -584,6 +733,28 @@ export default function GradeTracker() {
                      <input name="code" placeholder="Code (CS101)" className="border p-2 w-full rounded mb-2" required />
                      <input name="credits" placeholder="Credits" className="border p-2 w-full rounded mb-2" required />
                      <button className="bg-blue-600 text-white w-full p-2 rounded font-bold">Add</button>
+                 </form>
+             </div>
+          </div>
+      )}
+
+      {isEventModalOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+             <div className="bg-white p-6 rounded-xl w-full max-w-md shadow-xl border-t-4 border-purple-600">
+                 <h3 className="font-bold text-lg mb-4">Add Calendar Event</h3>
+                 <form onSubmit={handleCreateEvent}>
+                     <input name="title" placeholder="Event Title" className="border p-2 w-full rounded mb-2" required />
+                     <div className="grid grid-cols-2 gap-2 mb-2">
+                         <input name="date" type="date" className="border p-2 w-full rounded" required />
+                         <select name="type" className="border p-2 w-full rounded">
+                             <option value="EVENT">Event</option><option value="EXAM">Exam</option>
+                         </select>
+                     </div>
+                     <textarea name="description" placeholder="Description" className="border p-2 w-full rounded mb-2 h-20"/>
+                     <div className="flex justify-end gap-2">
+                        <button type="button" onClick={() => setIsEventModalOpen(false)} className="px-3 py-1 text-gray-500">Cancel</button>
+                        <button type="submit" className="px-3 py-1 bg-purple-600 text-white rounded">Add</button>
+                    </div>
                  </form>
              </div>
           </div>
