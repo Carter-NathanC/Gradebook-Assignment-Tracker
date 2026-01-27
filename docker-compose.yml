@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  gradetracker:
+    build: .
+    container_name: grade-tracker
+    restart: unless-stopped
+    ports:
+      - "2501:3000" # Maps host port 2501 to container port 3000
+    volumes:
+      - ./data:/app/data # Persist data to a local 'data' folder
+    environment:
+      - PORT=3000
