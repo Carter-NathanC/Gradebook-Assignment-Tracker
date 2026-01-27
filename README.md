@@ -57,12 +57,8 @@ GradeTracker allows you to customize how grades are calculated for each class.
 
 ### **How to use Custom Logic**
 
-The "Custom Logic" (currently a placeholder for future script integration) allows you to document specific complex rules for a class, such as:
-
-* "Final Exam replaces lowest midterm score if higher."  
-* "Best 5 out of 6 Quizzes count."
-
-*Note: In the current version, the app will default to a standard "Total Points" calculation if Custom Logic is selected, but you can use the text area to save your specific rules for reference.*
+The "Custom Logic" allows you to document specific complex rules for a class, such as "Final Exam replaces lowest midterm score if higher."  
+*Note: The app defaults to "Total Points" if Custom Logic is selected, but you can use the text area to save your specific rules for reference.*
 
 ### **Using "Rules" (Drop Lowest)**
 
@@ -74,6 +70,19 @@ For automated rule handling, use the **Rules** tab in Class Settings:
 4. Select the **Category** (e.g., "Homework").  
 5. Save. The app will automatically recalculate your grade, ignoring the lowest score(s) in that category.
 
+## **🔄 Updating the App**
+
+When new features or bug fixes are released, follow these steps to update **without losing your data**:
+
+1. **Pull the latest code:**  
+   git pull origin main
+
+2. **Rebuild the container:**  
+   This updates the application code inside the Docker container while keeping your data/ folder intact (since it's mounted as a volume).  
+   docker-compose up \-d \--build
+
+3. **Done\!** Your grades and settings will still be there.
+
 ## **🛠️ Data Management**
 
 ### **Where is my data saved?**
@@ -83,14 +92,25 @@ Your data (grades, assignments, and settings) is stored in a data/ folder inside
 * **Backup:** To backup your data, simply copy the data/ folder to a safe location.  
 * **Privacy:** The data/ folder is ignored by Git, so your personal grades are never uploaded to the internet if you push code changes.
 
-### **Resetting Your Password**
+### **🔑 Resetting Your Password (Terminal)**
 
-If you lose your Access Key:
+If you forget your Access Key, you can reset it directly from the terminal without losing your grades.
 
-1. Stop the container: docker-compose down  
-2. Delete the authentication file: rm data/auth.json (Do NOT delete database.json if you want to keep your grades).  
-3. Restart the container: docker-compose up \-d  
-4. Check the logs again for a **new** key: docker-compose logs gradetracker
+1. **Stop the container:**  
+   docker-compose down
+
+2. **Delete the authentication file:**  
+   **WARNING:** Only delete auth.json. Do NOT delete database.json (that's your grades\!).  
+   rm data/auth.json
+
+3. **Restart the container:**  
+   docker-compose up \-d
+
+4. **Get your NEW key:**  
+   The system will detect the missing auth file and generate a brand new key.  
+   docker-compose logs gradetracker
+
+   *Look for the new yellow key in the logs.*
 
 ## **🛑 Stopping the App**
 
