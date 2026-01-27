@@ -100,16 +100,14 @@ export default function GradeTracker() {
       await apiCall('/data', 'POST', dbPayload);
   };
 
-  // --- Password Update Logic ---
+  // --- Password Update Logic (FIXED) ---
   const handleUpdatePassword = async (newPass) => {
       if (!newPass) return;
       if (!confirm("Are you sure you want to change your password? You will need this new key to log in next time.")) return;
       
       try {
-          // The API returns { success: true } on success
           const res = await apiCall('/change-password', 'POST', { newPassword: newPass });
           if (res.success) {
-              // CRITICAL: Update local state immediately so subsequent requests succeed
               setAccessKey(newPass);
               localStorage.setItem('gt_access_key', newPass);
               alert("Password updated successfully.");
@@ -180,7 +178,7 @@ export default function GradeTracker() {
   // --- Logic ---
   const calculateClassGrade = (classId) => {
     const cls = classes.find(c => c.id === classId);
-    if (!cls) return { percent: 0, letter: 'N/A', gpa: 0.0, earned: 0, total: 0 };
+    if (!cls) return { percent: 0, letter: 'N/A', gpa: 0.0 };
 
     const now = new Date().toLocaleDateString('en-CA');
     let classAssignments = assignments.filter(a => {
@@ -188,6 +186,7 @@ export default function GradeTracker() {
         return (a.status === 'GRADED' || a.status === 'TURNED_IN' || (a.dueDate && a.dueDate < now));
     });
 
+    // Drop Lowest Logic
     if (cls.rules) {
         cls.rules.forEach(rule => {
             if (rule.type === 'DROP_LOWEST') {
@@ -461,7 +460,10 @@ export default function GradeTracker() {
           <div className="space-y-8 animate-fade-in print:w-full">
               <div className="flex justify-between items-center print:hidden">
                   <h2 className="text-2xl font-bold text-slate-800">Performance Report</h2>
-                  <button onClick={() => window.print()} className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-900 shadow"><Printer size={16}/> Print Report</button>
+                  <div className="flex gap-2">
+                      <button onClick={downloadCSV} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 shadow"><Download size={16}/> CSV</button>
+                      <button onClick={() => window.print()} className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-900 shadow"><Printer size={16}/> Print</button>
+                  </div>
               </div>
               <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 print:shadow-none print:border-none print:p-0">
                   <div className="flex justify-between border-b border-slate-100 pb-6 mb-6">
