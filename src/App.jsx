@@ -104,6 +104,7 @@ export default function GradeTracker() {
   const handleUpdatePassword = async (newPass) => {
       if (!newPass) return;
       try {
+          // The API returns { success: true } on success
           const res = await apiCall('/change-password', 'POST', { newPassword: newPass });
           if (res.success) {
               // CRITICAL: Update local state immediately so subsequent requests succeed
@@ -756,8 +757,8 @@ export default function GradeTracker() {
                          {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><div key={d}>{d}</div>)}
                      </div>
                      <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px">
-                         {Array.from({length: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay()}).map((_,i)=><div key={`e-${i}`} className="bg-white min-h-[100px]"></div>)}
-                         {Array.from({length: new Date(currentDate.getFullYear(), currentDate.getMonth()+1, 0).getDate()}).map((_,i)=>{
+                         {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white min-h-[100px]"></div>)}
+                         {Array.from({length: daysInMonth}).map((_,i)=>{
                              const d = i+1;
                              const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
                              const daysItems = [...assignments.filter(a=>a.dueDate===dateStr), ...events.filter(e=>e.date===dateStr)];
