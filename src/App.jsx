@@ -26,6 +26,15 @@ const DEFAULT_GRADING_SCALE = [
   { letter: 'D-', min: 60, gpa: 0.7 }, { letter: 'F', min: 0, gpa: 0.0 },
 ];
 
+const CLASS_COLORS = [
+    'bg-blue-100 text-blue-800 border-blue-200',
+    'bg-green-100 text-green-800 border-green-200',
+    'bg-purple-100 text-purple-800 border-purple-200',
+    'bg-orange-100 text-orange-800 border-orange-200',
+    'bg-pink-100 text-pink-800 border-pink-200',
+    'bg-teal-100 text-teal-800 border-teal-200',
+];
+
 // --- Helper Components ---
 const Card = ({ children, className = "" }) => (
   <div className={`bg-white rounded-xl shadow-sm border border-gray-100 p-6 ${className}`}>
@@ -504,6 +513,38 @@ export default function GradeTracker() {
                           </div>
                       </div>
                   </div>
+
+                  {/* Assignment Log Table */}
+                  <div className="mt-8 border rounded-lg overflow-hidden">
+                      <div className="bg-gray-50 p-3 border-b text-xs font-bold text-gray-500 uppercase">Detailed Assignment Log</div>
+                      <table className="w-full text-left text-xs">
+                          <thead className="bg-gray-50 border-b">
+                              <tr>
+                                  <th className="p-2">Class</th>
+                                  <th className="p-2">Assignment</th>
+                                  <th className="p-2">Category</th>
+                                  <th className="p-2">Due Date</th>
+                                  <th className="p-2">Status</th>
+                                  <th className="p-2 text-right">Score</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                              {assignments.sort((a,b) => new Date(b.dueDate) - new Date(a.dueDate)).map(a => {
+                                  const cls = classes.find(c => c.id === a.classId);
+                                  return (
+                                      <tr key={a.id}>
+                                          <td className="p-2 font-medium">{cls?.code || cls?.name}</td>
+                                          <td className="p-2">{a.name}</td>
+                                          <td className="p-2 text-gray-500">{a.category}</td>
+                                          <td className="p-2 text-gray-500">{a.dueDate}</td>
+                                          <td className="p-2"><Badge status={a.status}/></td>
+                                          <td className="p-2 text-right">{a.grade} / {a.total}</td>
+                                      </tr>
+                                  );
+                              })}
+                          </tbody>
+                      </table>
+                  </div>
               </div>
           </div>
       );
@@ -591,7 +632,7 @@ export default function GradeTracker() {
             <button onClick={() => setView('CALENDAR')} className={`w-full flex items-center gap-3 p-2 rounded text-sm ${view==='CALENDAR'?'bg-blue-50 text-blue-700':''}`}><CalendarIcon size={18}/> Calendar</button>
             <button onClick={() => setView('REPORT')} className={`w-full flex items-center gap-3 p-2 rounded text-sm ${view==='REPORT'?'bg-blue-50 text-blue-700':''}`}><FileText size={18}/> Reports</button>
             <div className="pt-4 text-xs font-bold text-gray-400 uppercase px-2">Classes</div>
-            {classes.map(c => {
+            {classes.map((c, i) => {
                 const s = calculateClassGrade(c.id);
                 return (
                     <button key={c.id} onClick={() => { setView('CLASS'); setActiveClassId(c.id); }} className={`w-full flex justify-between p-2 rounded text-sm ${view==='CLASS'&&activeClassId===c.id ? 'bg-blue-50 text-blue-700':''}`}>
@@ -619,21 +660,54 @@ export default function GradeTracker() {
                      <Card><div className="text-gray-500 text-sm">Assignments Due</div><div className="text-3xl font-bold">{assignments.filter(a=>a.status==='TODO').length}</div></Card>
                      <Card><div className="text-gray-500 text-sm">Completed</div><div className="text-3xl font-bold">{assignments.filter(a=>a.status==='GRADED').length}</div></Card>
                  </div>
-                 {/* Class List Card */}
-                 <Card>
-                     <h3 className="font-bold mb-4">Class Overview</h3>
-                     <div className="space-y-2">
-                         {classes.map(c => {
-                             const s = calculateClassGrade(c.id);
-                             return (
-                                 <div key={c.id} onClick={() => { setView('CLASS'); setActiveClassId(c.id); }} className="flex justify-between p-3 hover:bg-gray-50 rounded cursor-pointer border-b">
-                                     <div><div className="font-bold">{c.name}</div><div className="text-xs text-gray-500">{c.code}</div></div>
-                                     <div className="text-right"><div className="font-bold text-blue-700">{s.letter}</div><div className="text-xs text-gray-500">{s.percent.toFixed(1)}%</div></div>
-                                 </div>
-                             )
-                         })}
-                     </div>
-                 </Card>
+                 
+                 {/* Todo List - Student Aid */}
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     <Card>
+                         <h3 className="font-bold mb-4 flex items-center gap-2"><Clock className="text-orange-500" size={20}/> Upcoming To-Do</h3>
+                         <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                             {assignments
+                                .filter(a => a.status !== 'GRADED')
+                                .sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate))
+                                .map(a => {
+                                    const cls = classes.find(c => c.id === a.classId);
+                                    const clsIndex = classes.findIndex(c => c.id === a.classId);
+                                    const colorClass = CLASS_COLORS[clsIndex % CLASS_COLORS.length] || 'bg-gray-100';
+                                    
+                                    return (
+                                        <div key={a.id} onClick={() => { setActiveAssignment(a); setIsEditModalOpen(true); }} className="flex justify-between p-3 hover:bg-gray-50 rounded border-b border-gray-50 cursor-pointer">
+                                            <div>
+                                                <div className="font-bold text-sm">{a.name}</div>
+                                                <div className="text-xs text-gray-500 flex gap-2">
+                                                    <span className={`px-1.5 rounded ${colorClass} text-[10px] font-bold`}>{cls?.code}</span>
+                                                    <span>{a.dueDate}</span>
+                                                </div>
+                                            </div>
+                                            <Badge status={a.status} />
+                                        </div>
+                                    )
+                                })
+                             }
+                             {assignments.filter(a => a.status !== 'GRADED').length === 0 && <p className="text-gray-400 text-sm text-center py-4">All caught up! Great job.</p>}
+                         </div>
+                     </Card>
+
+                     <Card>
+                         <h3 className="font-bold mb-4">Class Performance</h3>
+                         <div className="space-y-2">
+                             {classes.map((c, i) => {
+                                 const s = calculateClassGrade(c.id);
+                                 const colorClass = CLASS_COLORS[i % CLASS_COLORS.length];
+                                 return (
+                                     <div key={c.id} onClick={() => { setView('CLASS'); setActiveClassId(c.id); }} className={`flex justify-between p-3 rounded cursor-pointer border hover:shadow-md transition-all ${colorClass.replace('text', 'border')}`}>
+                                         <div><div className="font-bold">{c.name}</div><div className="text-xs opacity-75">{c.code}</div></div>
+                                         <div className="text-right"><div className="font-bold text-lg">{s.letter}</div><div className="text-xs">{s.percent.toFixed(1)}%</div></div>
+                                     </div>
+                                 )
+                             })}
+                         </div>
+                     </Card>
+                 </div>
              </div>
          )}
          
