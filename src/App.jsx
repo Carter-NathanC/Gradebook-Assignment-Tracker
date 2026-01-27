@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BookOpen, CheckCircle, Clock, GraduationCap, LayoutDashboard, 
   LogOut, Plus, Settings, Calendar as CalendarIcon, 
-  ChevronRight, ChevronLeft, Trash2, X, Wrench, 
-  Printer, FileText, Lock, AlertTriangle
+  ChevronRight, ChevronLeft, Trash2, X, Download, Wrench, 
+  Printer, FileText, Lock, Shield, Key, Save,
+  AlertTriangle, ExternalLink
 } from 'lucide-react';
 
 /* GRADE TRACKER FRONTEND (Pro Version) */
@@ -99,6 +100,25 @@ export default function GradeTracker() {
       await apiCall('/data', 'POST', dbPayload);
   };
 
+  // --- Password Update Logic ---
+  const handleUpdatePassword = async (newPass) => {
+      if (!newPass) return;
+      try {
+          const res = await apiCall('/change-password', 'POST', { newPassword: newPass });
+          if (res.success) {
+              // CRITICAL: Update local state immediately so subsequent requests succeed
+              setAccessKey(newPass);
+              localStorage.setItem('gt_access_key', newPass);
+              alert("Password updated successfully.");
+              setIsGlobalSettingsOpen(false);
+          } else {
+              alert("Failed to update password.");
+          }
+      } catch (e) {
+          alert("Error updating password: " + e.message);
+      }
+  };
+
   useEffect(() => {
     if (accessKey) verifyAndLoad(); else setLoading(false);
   }, []);
@@ -191,8 +211,202 @@ export default function GradeTracker() {
     return creds === 0 ? "0.00" : (pts / creds).toFixed(2);
   };
 
-  // --- Views ---
+  // --- CRUD Handlers ---
+  const handleCreateEvent = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const newEvent = {
+          id: crypto.randomUUID(),
+          title: fd.get('title'),
+          date: fd.get('date'),
+          type: fd.get('type'),
+          description: fd.get('description')
+      };
+      setEvents([...events, newEvent]);
+      await saveData({ events: [...events, newEvent] });
+      setIsEventModalOpen(false);
+  };
+
+  const handleUpdateClass = async (updatedClass) => {
+      const updatedClasses = classes.map(c => c.id === updatedClass.id ? updatedClass : c);
+      setClasses(updatedClasses);
+      await saveData({ classes: updatedClasses });
+      setIsClassSettingsOpen(false);
+  };
+
+  const handleDeleteClass = async (id) => {
+      if(!confirm("Are you sure? This deletes the class and all assignments.")) return;
+      const newClasses = classes.filter(c => c.id !== id);
+      const newAssignments = assignments.filter(a => a.classId !== id);
+      setClasses(newClasses);
+      setAssignments(newAssignments);
+      await saveData({ classes: newClasses, assignments: newAssignments });
+      setIsClassSettingsOpen(false);
+      setView('DASHBOARD');
+  };
+
+  const handleUpdateAssignment = async (updated) => {
+      const newAsg = assignments.map(a => a.id === updated.id ? updated : a);
+      setAssignments(newAsg);
+      await saveData({ assignments: newAsg });
+      setIsEditModalOpen(false);
+  };
+
+  const handleDeleteAssignment = async (id) => {
+      if(!confirm("Delete assignment?")) return;
+      const newAsg = assignments.filter(a => a.id !== id);
+      setAssignments(newAsg);
+      await saveData({ assignments: newAsg });
+      setIsEditModalOpen(false);
+  };
+
+  // --- Sub-Components (Modals) ---
+
+  const ClassSettingsModal = () => {
+      const cls = classes.find(c => c.id === activeClassId);
+      if(!cls) return null;
+      const [localSettings, setLocalSettings] = useState({...cls, gradingScale: cls.gradingScale || DEFAULT_GRADING_SCALE});
+      const [tab, setTab] = useState('GENERAL');
+
+      const addCategory = () => setLocalSettings({...localSettings, categories: [...(localSettings.categories||[]), {name: 'New', weight: 0}]});
+      const updateCat = (i, f, v) => {
+          const cats = [...localSettings.categories]; cats[i][f] = v;
+          setLocalSettings({...localSettings, categories: cats});
+      };
+      const removeCat = (i) => {
+          const cats = localSettings.categories.filter((_, idx) => idx !== i);
+          setLocalSettings({...localSettings, categories: cats});
+      };
+
+      const updateScale = (i, f, v) => {
+          const sc = [...localSettings.gradingScale]; sc[i][f] = v;
+          setLocalSettings({...localSettings, gradingScale: sc});
+      };
+
+      const addRule = () => setLocalSettings({...localSettings, rules: [...(localSettings.rules||[]), {type: 'DROP_LOWEST', count: 1, category: 'Homework'}]});
+      const updateRule = (i, f, v) => {
+          const rs = [...localSettings.rules]; rs[i][f] = v;
+          setLocalSettings({...localSettings, rules: rs});
+      };
+      const removeRule = (i) => {
+          const rs = localSettings.rules.filter((_, idx) => idx !== i);
+          setLocalSettings({...localSettings, rules: rs});
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-3xl rounded-xl shadow-xl flex flex-col max-h-[90vh]">
+                <div className="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-xl">
+                    <h3 className="font-bold text-lg">Class Settings: {cls.name}</h3>
+                    <button onClick={() => setIsClassSettingsOpen(false)}><X size={20}/></button>
+                </div>
+                <div className="flex border-b overflow-x-auto">
+                    {['GENERAL', 'GRADING', 'SCALE', 'RULES', 'DANGER'].map(t => (
+                        <button key={t} onClick={()=>setTab(t)} className={`px-4 py-3 text-sm font-bold whitespace-nowrap ${tab===t?'border-b-2 border-blue-600 text-blue-600':'text-gray-500'}`}>{t}</button>
+                    ))}
+                </div>
+                <div className="p-6 overflow-y-auto flex-1">
+                    {tab === 'GENERAL' && (
+                        <div className="space-y-4">
+                            <label className="block text-sm font-bold text-gray-700">Class Information</label>
+                            <input value={localSettings.name} onChange={e=>setLocalSettings({...localSettings, name: e.target.value})} className="border p-2 w-full rounded" placeholder="Class Name"/>
+                            <div className="grid grid-cols-2 gap-4">
+                                <input value={localSettings.code} onChange={e=>setLocalSettings({...localSettings, code: e.target.value})} className="border p-2 w-full rounded" placeholder="Code"/>
+                                <input value={localSettings.credits} onChange={e=>setLocalSettings({...localSettings, credits: e.target.value})} className="border p-2 w-full rounded" placeholder="Credits" type="number"/>
+                            </div>
+                        </div>
+                    )}
+                    {tab === 'GRADING' && (
+                        <div className="space-y-6">
+                            <div className="flex gap-4">
+                                {['POINTS', 'WEIGHTED', 'CUSTOM'].map(type => (
+                                    <button key={type} onClick={()=>setLocalSettings({...localSettings, gradingType: type})} 
+                                        className={`flex-1 p-3 rounded border text-center font-bold ${localSettings.gradingType===type ? 'bg-blue-50 border-blue-600 text-blue-700' : 'border-gray-200 text-gray-500'}`}>
+                                        {type === 'POINTS' && "Total Points"}
+                                        {type === 'WEIGHTED' && "Weighted"}
+                                        {type === 'CUSTOM' && "Custom Logic"}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {localSettings.gradingType === 'WEIGHTED' && (
+                                <div className="bg-gray-50 p-4 rounded border">
+                                    <div className="flex justify-between mb-2"><span className="font-bold text-sm">Weighted Categories</span><button onClick={addCategory} className="text-blue-600 text-xs font-bold">+ ADD CATEGORY</button></div>
+                                    {localSettings.categories?.map((cat, i) => (
+                                        <div key={i} className="flex gap-2 mb-2 items-center">
+                                            <input value={cat.name} onChange={e=>updateCat(i, 'name', e.target.value)} className="border p-1 flex-1 rounded text-sm" placeholder="Name"/>
+                                            <div className="flex items-center gap-1"><input type="number" value={cat.weight} onChange={e=>updateCat(i, 'weight', e.target.value)} className="border p-1 w-16 rounded text-right text-sm"/><span className="text-sm">%</span></div>
+                                            <button onClick={()=>removeCat(i)} className="text-red-400 p-1 hover:text-red-600"><Trash2 size={16}/></button>
+                                        </div>
+                                    ))}
+                                    <div className="text-right text-xs font-bold text-gray-500 mt-2">Total Weight: {localSettings.categories?.reduce((a,b)=>a+(parseFloat(b.weight)||0),0)}%</div>
+                                </div>
+                            )}
+                            
+                            {localSettings.gradingType === 'CUSTOM' && (
+                                <div className="bg-yellow-50 p-4 rounded border border-yellow-200">
+                                    <p className="text-sm text-yellow-800 font-medium mb-2"><AlertTriangle size={16} className="inline mr-1"/> Custom Logic</p>
+                                    <textarea 
+                                        value={localSettings.customScript || ''} 
+                                        onChange={e=>setLocalSettings({...localSettings, customScript: e.target.value})}
+                                        className="w-full h-32 p-2 border rounded font-mono text-xs"
+                                        placeholder="// Enter custom logic description or code snippet here..."
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {tab === 'SCALE' && (
+                        <div className="space-y-4">
+                            <p className="text-sm text-gray-500">Define percentage cutoffs for each letter grade.</p>
+                            <div className="grid grid-cols-3 gap-2 font-bold text-xs text-gray-400 uppercase"><div>Letter</div><div>Min %</div><div>GPA</div></div>
+                            {localSettings.gradingScale.map((s, i) => (
+                                <div key={i} className="grid grid-cols-3 gap-4">
+                                    <div className="p-2 bg-gray-100 rounded text-center font-bold text-gray-700">{s.letter}</div>
+                                    <input type="number" value={s.min} onChange={e => updateScale(i, 'min', e.target.value)} className="p-2 border rounded" />
+                                    <input type="number" value={s.gpa} onChange={e => updateScale(i, 'gpa', e.target.value)} className="p-2 border rounded" step="0.1" />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {tab === 'RULES' && (
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-center"><p className="text-sm text-gray-500">Special Grading Rules</p><button onClick={addRule} className="text-blue-600 text-xs font-bold">+ ADD RULE</button></div>
+                            {localSettings.rules?.map((rule, i) => (
+                                <div key={i} className="bg-gray-50 p-3 rounded border flex justify-between items-center">
+                                    <div className="flex items-center gap-2 text-sm">
+                                        <span>Drop Lowest</span>
+                                        <input type="number" value={rule.count} onChange={e=>updateRule(i, 'count', e.target.value)} className="w-12 p-1 border rounded text-center"/>
+                                        <span>from</span>
+                                        <select value={rule.category} onChange={e=>updateRule(i, 'category', e.target.value)} className="p-1 border rounded bg-white">
+                                            {localSettings.categories?.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <button onClick={()=>removeRule(i)}><X size={16} className="text-gray-400 hover:text-red-500"/></button>
+                                </div>
+                            ))}
+                            {(!localSettings.rules || localSettings.rules.length === 0) && <p className="text-center text-gray-400 text-sm italic">No rules defined.</p>}
+                        </div>
+                    )}
+                    {tab === 'DANGER' && (
+                        <div className="bg-red-50 p-6 rounded text-center border border-red-100">
+                            <h4 className="text-red-800 font-bold mb-2">Delete Class</h4>
+                            <p className="text-red-600 text-sm mb-4">This action cannot be undone.</p>
+                            <button onClick={()=>handleDeleteClass(localSettings.id)} className="bg-red-600 text-white px-6 py-2 rounded font-bold hover:bg-red-700">Delete Permanently</button>
+                        </div>
+                    )}
+                </div>
+                <div className="p-4 border-t flex justify-end gap-2 bg-gray-50 rounded-b-xl">
+                    <button onClick={()=>setIsClassSettingsOpen(false)} className="px-4 py-2 text-gray-600 font-medium">Cancel</button>
+                    <button onClick={()=>handleUpdateClass(localSettings)} className="px-6 py-2 bg-blue-600 text-white rounded font-bold shadow hover:bg-blue-700">Save Changes</button>
+                </div>
+            </div>
+        </div>
+      );
+  };
+
   const ReportView = () => {
+      // Calculate Stats
       const totalAssigns = assignments.length;
       const gradedCount = assignments.filter(a => a.status === 'GRADED').length;
       const statusCounts = assignments.reduce((acc, curr) => {
@@ -228,6 +442,7 @@ export default function GradeTracker() {
                       <div className="text-right text-xs text-slate-400">Generated: {new Date().toLocaleDateString()}</div>
                   </div>
                   
+                  {/* KPIs */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-10 print:grid-cols-4">
                       <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 print:border-slate-300">
                           <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">GPA</div>
@@ -247,6 +462,7 @@ export default function GradeTracker() {
                       </div>
                   </div>
 
+                  {/* Visuals */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8 print:grid-cols-2">
                       <div className="p-6 border border-slate-200 rounded-xl print:border-slate-300">
                           <h4 className="font-bold text-slate-800 mb-6">Grade Breakdown</h4>
@@ -266,11 +482,16 @@ export default function GradeTracker() {
                       </div>
                       <div className="p-6 border border-slate-200 rounded-xl flex flex-col items-center justify-center print:border-slate-300">
                           <h4 className="font-bold text-slate-800 mb-6 w-full text-left">Workload</h4>
-                          <div className="w-40 h-40 rounded-full relative shadow-inner" style={{background: `conic-gradient(${gradStr})`}}>
+                          <div className="w-40 h-40 rounded-full relative shadow-inner print:print-color-adjust" style={{background: `conic-gradient(${gradStr})`}}>
                               <div className="absolute inset-6 bg-white rounded-full flex flex-col items-center justify-center shadow-sm">
                                   <span className="text-2xl font-bold text-slate-800">{totalAssigns}</span>
                                   <span className="text-xs text-slate-400 uppercase">Items</span>
                               </div>
+                          </div>
+                          <div className="flex flex-wrap gap-4 mt-6 text-xs justify-center">
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500 print:print-color-adjust"></div>Graded</div>
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-400 print:print-color-adjust"></div>Todo</div>
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500 print:print-color-adjust"></div>In Progress</div>
                           </div>
                       </div>
                   </div>
@@ -291,6 +512,56 @@ export default function GradeTracker() {
                               ))}
                           </tbody>
                       </table>
+                  </div>
+              </div>
+          </div>
+      );
+  };
+
+  const CalendarView = () => {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const firstDay = new Date(year, month, 1).getDay();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+      const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+      const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
+
+      return (
+          <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><CalendarIcon className="text-blue-600"/> Academic Calendar</h2>
+                  <button onClick={() => setIsEventModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex items-center gap-2"><Plus size={16}/> Add Event</button>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="p-4 flex justify-between items-center bg-gray-50 border-b">
+                      <button onClick={prevMonth} className="p-2 hover:bg-white rounded-full"><ChevronLeft/></button>
+                      <h3 className="text-lg font-bold">{monthNames[month]} {year}</h3>
+                      <button onClick={nextMonth} className="p-2 hover:bg-white rounded-full"><ChevronRight/></button>
+                  </div>
+                  <div className="grid grid-cols-7 text-center bg-gray-100 text-xs font-bold text-gray-500 uppercase py-2">
+                      {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><div key={d}>{d}</div>)}
+                  </div>
+                  <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px">
+                      {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white min-h-[100px]"></div>)}
+                      {Array.from({length: daysInMonth}).map((_,i)=>{
+                          const d = i+1;
+                          const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                          const daysItems = [...assignments.filter(a=>a.dueDate===dateStr), ...events.filter(e=>e.date===dateStr)];
+                          return (
+                              <div key={d} className="bg-white min-h-[100px] p-2 hover:bg-blue-50 transition-colors group relative">
+                                  <div className={`text-sm font-bold mb-1 ${new Date().toDateString() === new Date(year,month,d).toDateString() ? 'text-blue-600':''}`}>{d}</div>
+                                  <div className="space-y-1">
+                                      {daysItems.map((item, idx) => (
+                                          <div key={idx} onClick={()=>{ if(item.grade!==undefined){setActiveAssignment(item); setIsEditModalOpen(true);} }} className={`text-[10px] px-1 rounded truncate cursor-pointer ${item.grade!==undefined ? (item.status==='GRADED'?'bg-green-100 text-green-800':'bg-blue-100 text-blue-800') : 'bg-purple-100 text-purple-800'}`}>
+                                              {item.name || item.title}
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+                          )
+                      })}
                   </div>
               </div>
           </div>
@@ -358,7 +629,7 @@ export default function GradeTracker() {
                      <Card><div className="text-gray-500 text-sm">Completed</div><div className="text-3xl font-bold">{assignments.filter(a=>a.status==='GRADED').length}</div></Card>
                  </div>
                  
-                 {/* Todo List & Class Performance */}
+                 {/* Todo List - Student Aid */}
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                      <Card>
                          <h3 className="font-bold mb-4 flex items-center gap-2"><Clock className="text-orange-500" size={20}/> Upcoming To-Do</h3>
@@ -618,18 +889,7 @@ export default function GradeTracker() {
            </div>
       )}
 
-      {isClassSettingsOpen && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white w-full max-w-2xl rounded-xl shadow-xl flex flex-col max-h-[90vh]">
-                {/* Simplified placeholder for full class settings modal logic which was verbose but logic is standard */}
-                <div className="p-6 text-center">
-                    <h3 className="font-bold mb-4">Class Settings: {classes.find(c=>c.id===activeClassId)?.name}</h3>
-                    <p className="text-gray-500 mb-4">Full grading rules and weight settings available here.</p>
-                    <button onClick={()=>setIsClassSettingsOpen(false)} className="px-4 py-2 bg-gray-200 rounded">Close (Full implementation in prev version)</button>
-                </div>
-            </div>
-        </div>
-      )}
+      {isClassSettingsOpen && <ClassSettingsModal />}
 
     </div>
   );
