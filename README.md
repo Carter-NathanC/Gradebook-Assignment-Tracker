@@ -9,18 +9,19 @@ This guide assumes you have **Docker** and **Docker Compose** installed on your 
 ### **1\. Download the Project**
 
 Clone this repository to your machine:  
-git clone \[https://github.com/carter-nathanc/gradebook-assignment-tracker.git\](https://github.com/carter-nathanc/gradebook-assignment-tracker.git)  
+git clone [https://github.com/carter-nathanc/gradebook-assignment-tracker.git\](https://github.com/carter-nathanc/gradebook-assignment-tracker.git)  
 cd gradebook-assignment-tracker
 
 ### **2\. Start the Application**
 
 Run the following command to build and start the server. This will download necessary dependencies and set up the environment automatically.  
+```
 docker-compose up \-d \--build
+```
 
 * up: Starts the containers defined in docker-compose.yml.  
 * \-d: Runs the container in "detached" mode (in the background).  
 * \--build: Forces a rebuild of the Docker image to ensure you have the latest code.
-
 ### **3\. Get Your Secure Login Key (Important\!)**
 
 On the very first run, the system generates a random **Access Key** for security. You need this key to log in.  
