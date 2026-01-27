@@ -16,7 +16,7 @@ cd gradebook-assignment-tracker
 
 Run the following command to build and start the server. This will download necessary dependencies and set up the environment automatically.  
 ```
-docker-compose up \-d \--build
+docker-compose up -d --build
 ```
 
 * up: Starts the containers defined in docker-compose.yml.  
