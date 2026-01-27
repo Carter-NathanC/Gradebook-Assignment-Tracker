@@ -103,11 +103,11 @@ export default function GradeTracker() {
   // --- Password Update Logic ---
   const handleUpdatePassword = async (newPass) => {
       if (!newPass) return;
+      if (!confirm("Are you sure you want to change your password? You will need this new key to log in next time.")) return;
+      
       try {
-          // The API returns { success: true } on success
           const res = await apiCall('/change-password', 'POST', { newPassword: newPass });
           if (res.success) {
-              // CRITICAL: Update local state immediately so subsequent requests succeed
               setAccessKey(newPass);
               localStorage.setItem('gt_access_key', newPass);
               alert("Password updated successfully.");
@@ -118,6 +118,37 @@ export default function GradeTracker() {
       } catch (e) {
           alert("Error updating password: " + e.message);
       }
+  };
+
+  // --- CSV Export Logic ---
+  const downloadCSV = () => {
+      let csvContent = "data:text/csv;charset=utf-8,";
+      csvContent += "Type,Class Name,Class Code,Item Name,Category,Due Date,Status,Score,Total,Percentage\n";
+
+      // Add Classes (Summary Rows)
+      classes.forEach(c => {
+          const s = calculateClassGrade(c.id);
+          csvContent += `Class,${c.name},${c.code},N/A,N/A,N/A,N/A,${s.earned || 0},${s.total || 0},${s.percent.toFixed(2)}%\n`;
+      });
+
+      // Add Assignments
+      assignments.forEach(a => {
+          const parentClass = classes.find(c => c.id === a.classId);
+          const percentage = a.total > 0 ? ((a.grade / a.total) * 100).toFixed(2) + "%" : "0%";
+          // Escape commas in names
+          const safeName = `"${a.name.replace(/"/g, '""')}"`;
+          const safeClass = parentClass ? `"${parentClass.name.replace(/"/g, '""')}"` : "Unknown";
+          
+          csvContent += `Assignment,${safeClass},${parentClass?.code || ""},${safeName},${a.category},${a.dueDate},${a.status},${a.grade},${a.total},${percentage}\n`;
+      });
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `grade_tracker_export_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
   };
 
   useEffect(() => {
@@ -147,7 +178,7 @@ export default function GradeTracker() {
   // --- Logic ---
   const calculateClassGrade = (classId) => {
     const cls = classes.find(c => c.id === classId);
-    if (!cls) return { percent: 0, letter: 'N/A', gpa: 0.0 };
+    if (!cls) return { percent: 0, letter: 'N/A', gpa: 0.0, earned: 0, total: 0 };
 
     const now = new Date().toLocaleDateString('en-CA');
     let classAssignments = assignments.filter(a => {
@@ -155,7 +186,6 @@ export default function GradeTracker() {
         return (a.status === 'GRADED' || a.status === 'TURNED_IN' || (a.dueDate && a.dueDate < now));
     });
 
-    // Drop Lowest Logic
     if (cls.rules) {
         cls.rules.forEach(rule => {
             if (rule.type === 'DROP_LOWEST') {
@@ -198,7 +228,7 @@ export default function GradeTracker() {
     const sortedScale = [...scale].sort((a, b) => b.min - a.min);
     const details = sortedScale.find(g => finalPercent >= g.min) || sortedScale[sortedScale.length - 1];
     
-    return { percent: finalPercent, letter: details.letter, gpa: details.gpa };
+    return { percent: finalPercent, letter: details.letter, gpa: details.gpa, earned: rawEarnedPoints, total: rawTotalPoints };
   };
 
   const getCumulativeGPA = () => {
@@ -781,16 +811,15 @@ export default function GradeTracker() {
          )}
       </main>
 
-      {/* --- Modals (ClassSettings, AddClass, Event, EditAssignment) go here (same as previous "Pro" version) --- */}
-      {/* ... (Kept the rest of the modal logic from previous response for brevity as it was correct) ... */}
-      
-      {/* Re-including standard modals to ensure full file correctness */}
+      {/* --- Modals --- */}
       {isGlobalSettingsOpen && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
               <div className="bg-white p-6 rounded-xl w-full max-w-md">
                   <h3 className="font-bold text-lg mb-4">Global Settings</h3>
                   <div className="space-y-4">
                       <div><label className="text-sm">University Name</label><input value={universityName} onChange={e=>setUniversityName(e.target.value)} className="border p-2 w-full rounded"/></div>
+                      
+                      {/* Password Update Section */}
                       <div className="border-t pt-4">
                           <label className="text-sm block mb-2 font-bold">Change Password</label>
                           <input type="password" id="newPass" placeholder="New Password" className="border p-2 w-full rounded mb-2"/>
@@ -799,7 +828,17 @@ export default function GradeTracker() {
                               if(pass) handleUpdatePassword(pass);
                           }} className="bg-gray-800 text-white px-3 py-1 rounded text-xs">Update Password</button>
                       </div>
-                      <div className="flex justify-end gap-2 mt-4">
+
+                      {/* Data Export Section */}
+                      <div className="border-t pt-4">
+                          <label className="text-sm block mb-2 font-bold">Export Data</label>
+                          <button onClick={downloadCSV} className="bg-green-600 text-white px-3 py-2 rounded text-sm w-full flex items-center justify-center gap-2">
+                              <Download size={16}/> Download as CSV
+                          </button>
+                          <p className="text-xs text-gray-500 mt-2">Export classes and assignments to a spreadsheet.</p>
+                      </div>
+
+                      <div className="flex justify-end gap-2 mt-4 pt-4 border-t">
                           <button onClick={()=>setIsGlobalSettingsOpen(false)} className="px-4 py-2">Close</button>
                           <button onClick={() => { saveData({ universityName }); setIsGlobalSettingsOpen(false); }} className="bg-blue-600 text-white px-4 py-2 rounded">Save</button>
                       </div>
