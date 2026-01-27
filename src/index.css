@@ -2,10 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hides scrollbars for cleaner UI */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* CRITICAL: Forces browsers to print background colors (graphs/badges) */
+@media print {
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Hide interactive elements when printing */
+  .no-print {
+    display: none !important;
+  }
 }
