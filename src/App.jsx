@@ -106,8 +106,10 @@ export default function GradeTracker() {
       if (!confirm("Are you sure you want to change your password? You will need this new key to log in next time.")) return;
       
       try {
+          // The API returns { success: true } on success
           const res = await apiCall('/change-password', 'POST', { newPassword: newPass });
           if (res.success) {
+              // CRITICAL: Update local state immediately so subsequent requests succeed
               setAccessKey(newPass);
               localStorage.setItem('gt_access_key', newPass);
               alert("Password updated successfully.");
@@ -677,6 +679,8 @@ export default function GradeTracker() {
                                     const due = new Date(a.dueDate);
                                     const today = new Date();
                                     const nextWeek = new Date(); nextWeek.setDate(today.getDate() + 7);
+                                    // Normalize for date comparison
+                                    due.setHours(0,0,0,0); today.setHours(0,0,0,0); nextWeek.setHours(0,0,0,0);
                                     const isThisWeek = due >= today && due <= nextWeek;
                                     
                                     return (
@@ -771,44 +775,7 @@ export default function GradeTracker() {
              )
          })()}
 
-         {view === 'CALENDAR' && (
-             <div className="space-y-6">
-                 <div className="flex justify-between items-center">
-                     <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><CalendarIcon className="text-blue-600"/> Academic Calendar</h2>
-                     <button onClick={() => setIsEventModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex items-center gap-2"><Plus size={16}/> Add Event</button>
-                 </div>
-                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                     <div className="p-4 flex justify-between items-center bg-gray-50 border-b">
-                         <button onClick={()=>setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth()-1, 1))} className="p-2 hover:bg-white rounded-full"><ChevronLeft/></button>
-                         <h3 className="text-lg font-bold">{currentDate.toLocaleString('default',{month:'long'})} {currentDate.getFullYear()}</h3>
-                         <button onClick={()=>setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth()+1, 1))} className="p-2 hover:bg-white rounded-full"><ChevronRight/></button>
-                     </div>
-                     <div className="grid grid-cols-7 text-center bg-gray-100 text-xs font-bold text-gray-500 uppercase py-2">
-                         {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><div key={d}>{d}</div>)}
-                     </div>
-                     <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px">
-                         {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white min-h-[100px]"></div>)}
-                         {Array.from({length: daysInMonth}).map((_,i)=>{
-                             const d = i+1;
-                             const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                             const daysItems = [...assignments.filter(a=>a.dueDate===dateStr), ...events.filter(e=>e.date===dateStr)];
-                             return (
-                                 <div key={d} className="bg-white min-h-[100px] p-2 hover:bg-blue-50 transition-colors group relative">
-                                     <div className={`text-sm font-bold mb-1 ${new Date().toDateString() === new Date(currentDate.getFullYear(),currentDate.getMonth(),d).toDateString() ? 'text-blue-600':''}`}>{d}</div>
-                                     <div className="space-y-1">
-                                         {daysItems.map((item, idx) => (
-                                             <div key={idx} onClick={()=>{ if(item.grade!==undefined){setActiveAssignment(item); setIsEditModalOpen(true);} }} className={`text-[10px] px-1 rounded truncate cursor-pointer ${item.grade!==undefined ? (item.status==='GRADED'?'bg-green-100 text-green-800':'bg-blue-100 text-blue-800') : 'bg-purple-100 text-purple-800'}`}>
-                                                 {item.name || item.title}
-                                             </div>
-                                         ))}
-                                     </div>
-                                 </div>
-                             )
-                         })}
-                     </div>
-                 </div>
-             </div>
-         )}
+         {view === 'CALENDAR' && <CalendarView />}
       </main>
 
       {/* --- Modals --- */}
