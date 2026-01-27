@@ -451,7 +451,7 @@ export default function GradeTracker() {
               <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 print:shadow-none print:border-none">
                   <div className="flex justify-between border-b border-slate-100 pb-6 mb-6">
                       <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 bg-blue-900 rounded-lg flex items-center justify-center text-white font-bold text-xl">{universityName.charAt(0)}</div>
+                          <div className="w-12 h-12 bg-blue-900 rounded-lg flex items-center justify-center text-white font-bold text-xl print:print-color-adjust">{universityName.charAt(0)}</div>
                           <div>
                               <h1 className="text-2xl font-bold text-slate-800">{universityName}</h1>
                               <p className="text-sm text-slate-500">Student Success Portal</p>
@@ -462,19 +462,19 @@ export default function GradeTracker() {
                   
                   {/* KPIs */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-10">
-                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 print:border-slate-300">
                           <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">GPA</div>
                           <div className="text-3xl font-bold text-blue-800 mt-1">{getCumulativeGPA()}</div>
                       </div>
-                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 print:border-slate-300">
                           <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Credits</div>
                           <div className="text-3xl font-bold text-slate-800 mt-1">{classes.reduce((a,c)=>a+(parseFloat(c.credits)||0),0)}</div>
                       </div>
-                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 print:border-slate-300">
                           <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Assignments</div>
                           <div className="text-3xl font-bold text-slate-800 mt-1">{totalAssigns}</div>
                       </div>
-                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+                      <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 print:border-slate-300">
                           <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Completion</div>
                           <div className="text-3xl font-bold text-slate-800 mt-1">{total===0?0:Math.round((gradedCount/total)*100)}%</div>
                       </div>
@@ -482,7 +482,7 @@ export default function GradeTracker() {
 
                   {/* Visuals */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-                      <div className="p-6 border border-slate-200 rounded-xl">
+                      <div className="p-6 border border-slate-200 rounded-xl print:border-slate-300">
                           <h4 className="font-bold text-slate-800 mb-6">Grade Breakdown</h4>
                           <div className="space-y-4">
                               {classes.map(c => {
@@ -490,35 +490,35 @@ export default function GradeTracker() {
                                   return (
                                       <div key={c.id}>
                                           <div className="flex justify-between text-xs mb-1 font-medium"><span className="text-slate-700">{c.name}</span><span className="text-slate-500">{s.percent.toFixed(1)}% ({s.letter})</span></div>
-                                          <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden">
-                                              <div className="h-full bg-blue-600" style={{width: `${s.percent}%`}}></div>
+                                          <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden print:print-color-adjust">
+                                              <div className="h-full bg-blue-600 print:print-color-adjust" style={{width: `${s.percent}%`}}></div>
                                           </div>
                                       </div>
                                   )
                               })}
                           </div>
                       </div>
-                      <div className="p-6 border border-slate-200 rounded-xl flex flex-col items-center justify-center">
+                      <div className="p-6 border border-slate-200 rounded-xl flex flex-col items-center justify-center print:border-slate-300">
                           <h4 className="font-bold text-slate-800 mb-6 w-full text-left">Workload Distribution</h4>
-                          <div className="w-40 h-40 rounded-full relative shadow-inner" style={{background: `conic-gradient(${gradStr})`}}>
+                          <div className="w-40 h-40 rounded-full relative shadow-inner print:print-color-adjust" style={{background: `conic-gradient(${gradStr})`}}>
                               <div className="absolute inset-6 bg-white rounded-full flex flex-col items-center justify-center shadow-sm">
                                   <span className="text-2xl font-bold text-slate-800">{totalAssigns}</span>
                                   <span className="text-xs text-slate-400 uppercase">Items</span>
                               </div>
                           </div>
                           <div className="flex flex-wrap gap-4 mt-6 text-xs justify-center">
-                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500"></div>Graded</div>
-                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-400"></div>Todo</div>
-                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div>In Progress</div>
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500 print:print-color-adjust"></div>Graded</div>
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-400 print:print-color-adjust"></div>Todo</div>
+                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500 print:print-color-adjust"></div>In Progress</div>
                           </div>
                       </div>
                   </div>
 
                   {/* Assignment Log Table */}
-                  <div className="mt-8 border rounded-lg overflow-hidden">
-                      <div className="bg-gray-50 p-3 border-b text-xs font-bold text-gray-500 uppercase">Detailed Assignment Log</div>
+                  <div className="mt-8 border rounded-lg overflow-hidden print:border-slate-300">
+                      <div className="bg-gray-50 p-3 border-b text-xs font-bold text-gray-500 uppercase print:bg-gray-100 print:border-slate-300">Detailed Assignment Log</div>
                       <table className="w-full text-left text-xs">
-                          <thead className="bg-gray-50 border-b">
+                          <thead className="bg-gray-50 border-b print:bg-gray-100 print:border-slate-300">
                               <tr>
                                   <th className="p-2">Class</th>
                                   <th className="p-2">Assignment</th>
@@ -528,7 +528,7 @@ export default function GradeTracker() {
                                   <th className="p-2 text-right">Score</th>
                               </tr>
                           </thead>
-                          <tbody className="divide-y">
+                          <tbody className="divide-y print:divide-slate-200">
                               {assignments.sort((a,b) => new Date(b.dueDate) - new Date(a.dueDate)).map(a => {
                                   const cls = classes.find(c => c.id === a.classId);
                                   return (
@@ -674,13 +674,22 @@ export default function GradeTracker() {
                                     const clsIndex = classes.findIndex(c => c.id === a.classId);
                                     const colorClass = CLASS_COLORS[clsIndex % CLASS_COLORS.length] || 'bg-gray-100';
                                     
+                                    // Check if due this week (within next 7 days from today)
+                                    const due = new Date(a.dueDate);
+                                    const today = new Date();
+                                    const nextWeek = new Date(today);
+                                    nextWeek.setDate(today.getDate() + 7);
+                                    
+                                    // Strip time for simpler comparison
+                                    const isThisWeek = due >= today && due <= nextWeek;
+                                    
                                     return (
-                                        <div key={a.id} onClick={() => { setActiveAssignment(a); setIsEditModalOpen(true); }} className="flex justify-between p-3 hover:bg-gray-50 rounded border-b border-gray-50 cursor-pointer">
+                                        <div key={a.id} onClick={() => { setActiveAssignment(a); setIsEditModalOpen(true); }} className={`flex justify-between p-3 hover:bg-gray-50 rounded border-b border-gray-50 cursor-pointer ${!isThisWeek ? 'opacity-70 grayscale-[0.5] hover:opacity-100 hover:grayscale-0 transition-all' : ''}`}>
                                             <div>
-                                                <div className="font-bold text-sm">{a.name}</div>
+                                                <div className={`font-bold text-sm ${isThisWeek ? 'text-slate-800' : 'text-gray-500'}`}>{a.name}</div>
                                                 <div className="text-xs text-gray-500 flex gap-2">
                                                     <span className={`px-1.5 rounded ${colorClass} text-[10px] font-bold`}>{cls?.code}</span>
-                                                    <span>{a.dueDate}</span>
+                                                    <span className={isThisWeek ? 'text-red-500 font-bold' : ''}>{a.dueDate}</span>
                                                 </div>
                                             </div>
                                             <Badge status={a.status} />
