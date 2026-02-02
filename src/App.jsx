@@ -5,7 +5,7 @@ import {
   ChevronRight, ChevronLeft, Trash2, X, Download, Wrench, 
   Printer, FileText, Lock, Shield, Key, Save,
   AlertTriangle, ExternalLink, Palette, TrendingUp, Target, Timer,
-  Flame, Zap
+  Flame, Zap, Info
 } from 'lucide-react';
 
 /* GRADE TRACKER - LOAD BALANCER EDITION */
@@ -101,6 +101,7 @@ export default function GradeTracker() {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedDayItems, setSelectedDayItems] = useState(null);
 
+  // --- API ---
   const apiCall = async (endpoint, method = 'GET', body = null) => {
     const headers = { 'Content-Type': 'application/json', 'x-access-key': accessKey };
     try {
@@ -142,6 +143,10 @@ export default function GradeTracker() {
       finally { setLoading(false); }
   };
 
+  useEffect(() => {
+    if (accessKey) verifyAndLoad(); else setLoading(false);
+  }, []);
+
   const handleLogin = (e) => { e.preventDefault(); verifyAndLoad(); };
   const handleLogout = () => { localStorage.removeItem('gt_access_key'); setAccessKey(''); setIsAuthenticated(false); };
 
@@ -173,7 +178,7 @@ export default function GradeTracker() {
       // 1. Mandatory items (Due Tomorrow)
       const dueTomorrow = weekWork.filter(a => a.dueDate === tomorrowStr);
       
-      // 2. Remaining pool for filling quota
+      // 2. Remaining pool for filling quota (next 7 days, excluding tomorrow)
       const pool = weekWork.filter(a => a.dueDate !== tomorrowStr).sort((a, b) => {
           // Sort by Due Date first
           if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
@@ -200,11 +205,10 @@ export default function GradeTracker() {
       return { date: todayStr, ids: planIds };
   };
 
-  // Logic to ensure the plan is fresh
+  // Ensure the plan is locked in once generated for the day
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && assignments.length > 0) {
         const todayStr = new Date().toISOString().split('T')[0];
-        // If the saved daily plan is from yesterday, or empty, generate a new one
         if (dailyPlan.date !== todayStr) {
             const newPlan = generateDailyPlan();
             setDailyPlan(newPlan);
@@ -217,14 +221,12 @@ export default function GradeTracker() {
   const calculateClassGrade = (classId) => {
     const cls = classes.find(c => c.id === classId);
     if (!cls) return { percent: 0, letter: 'N/A', gpa: 0.0, earned: 0, total: 0 };
-
     const now = new Date().toLocaleDateString('en-CA');
     let classAssignments = assignments.filter(a => {
         if (a.classId !== classId) return false;
         const statusConfig = customStatuses.find(s => s.id === a.status);
         return statusConfig?.countsInGrade || (a.dueDate && a.dueDate < now);
     });
-
     const rawTotalPoints = classAssignments.reduce((acc, curr) => acc + (parseFloat(curr.total) || 0), 0);
     const rawEarnedPoints = classAssignments.reduce((acc, curr) => acc + (parseFloat(curr.grade) || 0), 0);
     let finalPercent = rawTotalPoints === 0 ? 100 : (rawEarnedPoints / rawTotalPoints) * 100;
@@ -270,7 +272,10 @@ export default function GradeTracker() {
       return (
           <div className="space-y-8 animate-fade-in">
               <div className="flex justify-between items-end">
-                  <h2 className="text-3xl font-bold text-slate-800">7-Day Workload Forecast</h2>
+                  <div>
+                    <h2 className="text-3xl font-bold text-slate-800">7-Day Workload Forecast</h2>
+                    <p className="text-slate-500">Optimized scheduling for next week</p>
+                  </div>
                   <button onClick={() => window.print()} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold">Print Report</button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -287,6 +292,20 @@ export default function GradeTracker() {
                       <div className="text-3xl font-black text-slate-800 mt-1">{formatTime(Math.ceil(totalTime / 7))}</div>
                   </Card>
               </div>
+              <Card>
+                <h4 className="font-bold mb-4">Upcoming Schedule</h4>
+                <div className="space-y-2">
+                  {weekWork.sort((a,b) => a.dueDate.localeCompare(b.dueDate)).map(a => (
+                    <div key={a.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-100">
+                        <div>
+                          <span className="text-xs font-mono text-slate-400 mr-4">{a.dueDate}</span>
+                          <span className="font-bold text-slate-800">{a.name}</span>
+                        </div>
+                        <span className="text-xs text-slate-400">{formatTime(a.estimatedTime)}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
           </div>
       );
   };
@@ -327,7 +346,6 @@ export default function GradeTracker() {
                           const dayEvents = events.filter(e => e.date === dateStr);
                           const totalItems = dayAssignments.length + dayEvents.length;
                           
-                          // Highlighting
                           const isToday = dateStr === todayStr;
                           const isTomorrow = dateStr === tomorrowStr;
 
@@ -361,12 +379,11 @@ export default function GradeTracker() {
                           </div>
                           <div className="space-y-3 max-h-[60vh] overflow-y-auto no-scrollbar">
                               <div className="bg-slate-50 p-3 rounded-lg flex items-center justify-between text-xs font-bold text-slate-600">
-                                  <span>TIME REMAINING:</span>
-                                  <span className="flex items-center gap-1 text-blue-600">
-                                    <Timer size={14}/>
+                                  <span className="flex items-center gap-1 uppercase tracking-widest"><Timer size={14}/> Time Remaining:</span>
+                                  <span className="text-blue-600">
                                     {formatTime(selectedDayItems.items.filter(i => {
-                                        // If it's an assignment, check status
-                                        if (i.grade === undefined) return false;
+                                        // Is this item unfinished?
+                                        if (i.grade === undefined) return true; // Events always show
                                         const sc = customStatuses.find(s => s.id === i.status);
                                         return !sc?.countsInGrade && i.status !== 'TURNED_IN';
                                     }).reduce((acc, i) => acc + (parseInt(i.estimatedTime) || 0), 0))}
@@ -393,8 +410,6 @@ export default function GradeTracker() {
 
   // --- Dashboard Logic ---
   const todayWork = useMemo(() => {
-      // Filter the assignments to only those in the locked daily plan IDs
-      // and ensure we don't show items the user has already finished TODAY
       return assignments.filter(a => {
           const isFinishing = a.status === 'TURNED_IN' || a.status === 'GRADED';
           return dailyPlan.ids.includes(a.id) && !isFinishing;
@@ -410,7 +425,7 @@ export default function GradeTracker() {
          <div className="text-center mb-6">
             <div className="w-16 h-16 bg-blue-100 rounded-full mx-auto flex items-center justify-center mb-4"><Lock className="text-blue-800"/></div>
             <h1 className="text-2xl font-bold">Secure Access</h1>
-            <p className="text-gray-500 text-sm">Local Server Connection</p>
+            <p className="text-gray-500 text-sm">Gradebook Load Balancer</p>
          </div>
          <form onSubmit={handleLogin} className="space-y-4">
              <input type="password" value={accessKey} onChange={e => setAccessKey(e.target.value)} className="w-full p-2 border rounded font-mono" placeholder="Encryption Key" />
@@ -431,7 +446,7 @@ export default function GradeTracker() {
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto no-scrollbar">
             <button onClick={() => setView('DASHBOARD')} className={`w-full flex items-center gap-3 p-2 rounded text-sm font-medium transition-colors ${view==='DASHBOARD'?'bg-blue-50 text-blue-700':'hover:bg-gray-50'}`}><LayoutDashboard size={18}/> Dashboard</button>
             <button onClick={() => setView('CALENDAR')} className={`w-full flex items-center gap-3 p-2 rounded text-sm font-medium transition-colors ${view==='CALENDAR'?'bg-blue-50 text-blue-700':'hover:bg-gray-50'}`}><CalendarIcon size={18}/> Calendar</button>
-            <button onClick={() => setView('REPORT')} className={`w-full flex items-center gap-3 p-2 rounded text-sm font-medium transition-colors ${view==='REPORT'?'bg-blue-50 text-blue-700':'hover:bg-gray-50'}`}><TrendingUp size={18}/> Workload</button>
+            <button onClick={() => setView('REPORT')} className={`w-full flex items-center gap-3 p-2 rounded text-sm font-medium transition-colors ${view==='REPORT'?'bg-blue-50 text-blue-700':'hover:bg-gray-50'}`}><TrendingUp size={18}/> 7-Day Forecast</button>
             <div className="pt-6 pb-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest px-2">Classes</div>
             {classes.map((c) => {
                 const s = calculateClassGrade(c.id);
@@ -456,25 +471,27 @@ export default function GradeTracker() {
                      <Card className="bg-gradient-to-br from-blue-800 to-blue-600 text-white border-none shadow-xl flex flex-col justify-between">
                          <div className="text-blue-100 text-xs font-bold uppercase tracking-wider">Current GPA</div>
                          <div className="text-5xl font-black mt-2">{getCumulativeGPA()}</div>
-                         <div className="mt-4 text-[10px] opacity-75 font-bold uppercase">Dean's List Status</div>
+                         <div className="mt-4 text-[10px] opacity-75 font-bold uppercase">System Healthy</div>
                      </Card>
                      <Card className="flex flex-col justify-between border-t-4 border-t-orange-500">
-                         <div className="text-gray-400 text-xs font-bold uppercase tracking-wider">Tasks Locked for Today</div>
+                         <div className="text-gray-400 text-xs font-bold uppercase tracking-wider">Quota Remaining</div>
                          <div className="text-4xl font-black text-slate-800 mt-2">{todayWork.length}</div>
-                         <div className="mt-4 text-[10px] text-orange-600 font-bold uppercase flex items-center gap-1"><Zap size={10}/> Quota Adjusted</div>
+                         <div className="mt-4 text-[10px] text-orange-600 font-bold uppercase flex items-center gap-1"><Zap size={10}/> Weekly Load Balanced</div>
                      </Card>
                      <Card className="flex flex-col justify-between border-t-4 border-t-blue-500">
                          <div className="text-gray-400 text-xs font-bold uppercase tracking-wider">Today's Est. Time</div>
                          <div className="text-4xl font-black text-slate-800 mt-2">{formatTime(totalTodayTime)}</div>
-                         <div className="mt-4 text-[10px] text-blue-600 font-bold uppercase">Balanced Workload</div>
+                         <div className="mt-4 text-[10px] text-blue-600 font-bold uppercase">Target: 0m</div>
                      </Card>
                  </div>
                  
                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                      <Card className="lg:col-span-7">
                          <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-bold text-lg flex items-center gap-2 text-slate-800"><Flame className="text-orange-500" size={20}/> Today's To-Do</h3>
-                            <div className="text-[10px] font-bold text-slate-400 uppercase bg-slate-100 px-2 py-1 rounded">Daily Goal Met at 0</div>
+                            <h3 className="font-bold text-lg flex items-center gap-2 text-slate-800"><Flame className="text-orange-500" size={20}/> Today's To-Do Plan</h3>
+                            <div className="flex items-center gap-1 text-[10px] font-bold text-blue-500 uppercase bg-blue-50 px-2 py-1 rounded">
+                                <Info size={12}/> Daily Quota: {Math.ceil(get7DayWorkload().length / 7)}
+                            </div>
                          </div>
                          <div className="space-y-3">
                              {todayWork.length > 0 ? todayWork.map(a => {
@@ -483,7 +500,7 @@ export default function GradeTracker() {
                                     return (
                                         <div key={a.id} onClick={() => { setActiveAssignment(a); setIsEditModalOpen(true); }} 
                                             className={`group flex justify-between p-4 bg-white hover:bg-slate-50 rounded-xl border-2 transition-all cursor-pointer
-                                            ${isTomorrow ? 'border-blue-100 shadow-sm' : 'border-slate-50'}`}>
+                                            ${isTomorrow ? 'border-blue-200 shadow-sm bg-blue-50/20' : 'border-slate-50'}`}>
                                             <div className="flex gap-4">
                                                 <div className="flex flex-col items-center justify-center">
                                                     <div className={`w-2 h-2 rounded-full ${isTomorrow ? 'bg-blue-500 animate-pulse' : 'bg-slate-300'}`}></div>
@@ -493,7 +510,7 @@ export default function GradeTracker() {
                                                     <div className="text-sm font-black text-slate-800 group-hover:text-blue-600 transition-colors">{a.name}</div>
                                                     <div className="text-[10px] text-slate-400 font-bold uppercase flex gap-2 mt-1">
                                                         <span>{cls?.code}</span>
-                                                        <span className={isTomorrow ? 'text-blue-600' : ''}>{a.dueDate === new Date().toISOString().split('T')[0] ? 'TODAY' : isTomorrow ? 'TOMORROW' : a.dueDate}</span>
+                                                        <span className={isTomorrow ? 'text-blue-600' : ''}>{a.dueDate === new Date().toISOString().split('T')[0] ? 'DUE TODAY' : isTomorrow ? 'DUE TOMORROW' : a.dueDate}</span>
                                                         <span>• {formatTime(a.estimatedTime || 0)}</span>
                                                     </div>
                                                 </div>
@@ -504,15 +521,15 @@ export default function GradeTracker() {
                                 }) : (
                                     <div className="text-center py-12">
                                         <div className="w-16 h-16 bg-green-50 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle size={32}/></div>
-                                        <p className="font-bold text-slate-800">Today's Goal Complete!</p>
-                                        <p className="text-xs text-slate-400 mt-1 uppercase">New plan unlocks at midnight.</p>
+                                        <p className="font-bold text-slate-800">Plan Complete!</p>
+                                        <p className="text-xs text-slate-400 mt-1 uppercase">Enjoy your evening. New plan at midnight.</p>
                                     </div>
                                 )
                              }
                          </div>
                      </Card>
                      <Card className="lg:col-span-5">
-                         <h3 className="font-bold mb-6 text-slate-800">7-Day Snapshot</h3>
+                         <h3 className="font-bold mb-6 text-slate-800">Current Standings</h3>
                          <div className="space-y-3">
                              {classes.map((c, i) => {
                                  const s = calculateClassGrade(c.id);
@@ -559,7 +576,7 @@ export default function GradeTracker() {
                              <button onClick={() => setIsClassSettingsOpen(true)} className="p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors border text-slate-400 hover:text-slate-600"><Wrench size={24}/></button>
                              <div className="text-right">
                                  <div className="text-4xl font-black text-blue-700 leading-none">{s.percent.toFixed(1)}%</div>
-                                 <div className="text-[10px] font-bold text-slate-400 uppercase mt-2">Class Average</div>
+                                 <div className="text-[10px] font-bold text-slate-400 uppercase mt-2">Class Grade</div>
                              </div>
                          </div>
                      </div>
