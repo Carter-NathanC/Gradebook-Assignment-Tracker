@@ -4,10 +4,10 @@ import {
   LogOut, Plus, Settings, Calendar as CalendarIcon, 
   ChevronRight, ChevronLeft, Trash2, X, Download, Wrench, 
   Printer, FileText, Lock, Shield, Key, Save,
-  AlertTriangle, ExternalLink, Palette, TrendingUp, Target
+  AlertTriangle, ExternalLink, Palette, TrendingUp, Target, Timer
 } from 'lucide-react';
 
-/* GRADE TRACKER FRONTEND - Enhanced Reports & Dynamic Statuses */
+/* GRADE TRACKER FRONTEND - Time Tracking & Calendar Refactor */
 
 // --- Configuration ---
 const DEFAULT_THEME = {
@@ -64,6 +64,13 @@ const Badge = ({ status, customStatuses = [] }) => {
   return <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase ${config.color}`}>{config.label}</span>;
 };
 
+const formatTime = (mins) => {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+};
+
 // --- Main App ---
 export default function GradeTracker() {
   const [accessKey, setAccessKey] = useState(localStorage.getItem('gt_access_key') || '');
@@ -91,6 +98,7 @@ export default function GradeTracker() {
   const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(false);
   const [isClassSettingsOpen, setIsClassSettingsOpen] = useState(false);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [selectedDayItems, setSelectedDayItems] = useState(null); // For Calendar day drill-down
 
   // --- API ---
   const apiCall = async (endpoint, method = 'GET', body = null) => {
@@ -132,17 +140,17 @@ export default function GradeTracker() {
 
   const downloadCSV = () => {
       let csvContent = "data:text/csv;charset=utf-8,";
-      csvContent += "Type,Class Name,Class Code,Item Name,Category,Due Date,Status,Score,Total,Percentage\n";
+      csvContent += "Type,Class Name,Class Code,Item Name,Category,Due Date,Status,Score,Total,Percentage,Est Time (mins)\n";
       classes.forEach(c => {
           const s = calculateClassGrade(c.id);
-          csvContent += `Class,${c.name},${c.code},N/A,N/A,N/A,N/A,${s.earned || 0},${s.total || 0},${s.percent.toFixed(2)}%\n`;
+          csvContent += `Class,${c.name},${c.code},N/A,N/A,N/A,N/A,${s.earned || 0},${s.total || 0},${s.percent.toFixed(2)}%,0\n`;
       });
       assignments.forEach(a => {
           const parentClass = classes.find(c => c.id === a.classId);
           const percentage = a.total > 0 ? ((a.grade / a.total) * 100).toFixed(2) + "%" : "0%";
           const safeName = `"${a.name.replace(/"/g, '""')}"`;
           const statusLabel = customStatuses.find(s => s.id === a.status)?.label || a.status;
-          csvContent += `Assignment,${parentClass?.name || "Unknown"},${parentClass?.code || ""},${safeName},${a.category},${a.dueDate},${statusLabel},${a.grade},${a.total},${percentage}\n`;
+          csvContent += `Assignment,${parentClass?.name || "Unknown"},${parentClass?.code || ""},${safeName},${a.category},${a.dueDate},${statusLabel},${a.grade},${a.total},${percentage},${a.estimatedTime || 0}\n`;
       });
       const encodedUri = encodeURI(csvContent);
       const link = document.createElement("a");
@@ -297,7 +305,7 @@ export default function GradeTracker() {
       const [localSettings, setLocalSettings] = useState({...cls, gradingScale: cls.gradingScale || DEFAULT_GRADING_SCALE});
       const [tab, setTab] = useState('GENERAL');
 
-      const addCategory = () => setLocalSettings({...localSettings, categories: [...(localSettings.categories||[]), {name: 'New', weight: 0}]});
+      const addCategory = () => setLocalSettings({...localSettings, categories: [...(localSettings.categories||[]), {name: 'New', weight: 0, defaultTime: 30}]});
       const updateCat = (i, f, v) => {
           const cats = [...localSettings.categories]; cats[i][f] = v;
           setLocalSettings({...localSettings, categories: cats});
@@ -349,19 +357,33 @@ export default function GradeTracker() {
                                     </button>
                                 ))}
                             </div>
-                            {localSettings.gradingType === 'WEIGHTED' && (
-                                <div className="bg-gray-50 p-4 rounded border">
-                                    <div className="flex justify-between mb-2"><span className="font-bold text-sm">Weighted Categories</span><button onClick={addCategory} className="text-blue-600 text-xs font-bold">+ ADD CATEGORY</button></div>
+                            
+                            <div className="bg-gray-50 p-4 rounded border">
+                                <div className="flex justify-between mb-2"><span className="font-bold text-sm">Categories & Defaults</span><button onClick={addCategory} className="text-blue-600 text-xs font-bold">+ ADD CATEGORY</button></div>
+                                <div className="space-y-2">
+                                    <div className="grid grid-cols-12 gap-2 text-[10px] font-bold text-gray-400 uppercase">
+                                        <div className="col-span-6">Name</div>
+                                        <div className="col-span-2 text-center">Weight %</div>
+                                        <div className="col-span-3 text-center">Default Time</div>
+                                        <div className="col-span-1"></div>
+                                    </div>
                                     {localSettings.categories?.map((cat, i) => (
-                                        <div key={i} className="flex gap-2 mb-2 items-center">
-                                            <input value={cat.name} onChange={e=>updateCat(i, 'name', e.target.value)} className="border p-1 flex-1 rounded text-sm" placeholder="Name"/>
-                                            <div className="flex items-center gap-1"><input type="number" value={cat.weight} onChange={e=>updateCat(i, 'weight', e.target.value)} className="border p-1 w-16 rounded text-right text-sm"/><span className="text-sm">%</span></div>
-                                            <button onClick={()=>removeCat(i)} className="text-red-400 p-1 hover:text-red-600"><Trash2 size={16}/></button>
+                                        <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                                            <input value={cat.name} onChange={e=>updateCat(i, 'name', e.target.value)} className="col-span-6 border p-1 rounded text-sm" placeholder="Name"/>
+                                            <input type="number" value={cat.weight} onChange={e=>updateCat(i, 'weight', e.target.value)} className="col-span-2 border p-1 rounded text-center text-sm" disabled={localSettings.gradingType !== 'WEIGHTED'}/>
+                                            <div className="col-span-3 flex items-center gap-1">
+                                                <input type="number" value={cat.defaultTime} onChange={e=>updateCat(i, 'defaultTime', e.target.value)} className="border p-1 w-full rounded text-center text-sm"/>
+                                                <span className="text-[10px]">min</span>
+                                            </div>
+                                            <button onClick={()=>removeCat(i)} className="col-span-1 text-red-400 p-1 hover:text-red-600"><Trash2 size={16}/></button>
                                         </div>
                                     ))}
-                                    <div className="text-right text-xs font-bold text-gray-500 mt-2">Total Weight: {localSettings.categories?.reduce((a,b)=>a+(parseFloat(b.weight)||0),0)}%</div>
                                 </div>
-                            )}
+                                {localSettings.gradingType === 'WEIGHTED' && (
+                                    <div className="text-right text-xs font-bold text-gray-500 mt-2">Total Weight: {localSettings.categories?.reduce((a,b)=>a+(parseFloat(b.weight)||0),0)}%</div>
+                                )}
+                            </div>
+
                             {localSettings.gradingType === 'CUSTOM' && (
                                 <div className="bg-yellow-50 p-4 rounded border border-yellow-200">
                                     <p className="text-sm text-yellow-800 font-medium mb-2"><AlertTriangle size={16} className="inline mr-1"/> Custom Logic</p>
@@ -420,7 +442,6 @@ export default function GradeTracker() {
       const todayStr = new Date().toISOString().split('T')[0];
       const relevantAssignments = assignments.filter(a => a.dueDate <= todayStr);
       
-      // Calculate Stats
       const totalPossible = relevantAssignments.reduce((acc, a) => acc + (parseFloat(a.total) || 0), 0);
       const totalEarned = relevantAssignments.reduce((acc, a) => acc + (parseFloat(a.grade) || 0), 0);
       const avgScore = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
@@ -432,7 +453,6 @@ export default function GradeTracker() {
 
       const totalItems = relevantAssignments.length;
       
-      // Graph Data Preparation
       let conicSectors = "";
       let lastPercent = 0;
       const sectors = customStatuses.map(status => {
@@ -465,7 +485,6 @@ export default function GradeTracker() {
                   </div>
               </div>
 
-              {/* Top KPIs */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <Card className="flex flex-col items-center justify-center border-b-4 border-b-blue-600">
                       <div className="p-3 bg-blue-50 rounded-full text-blue-600 mb-2"><GraduationCap size={24}/></div>
@@ -483,14 +502,15 @@ export default function GradeTracker() {
                       <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Items Due</div>
                   </Card>
                   <Card className="flex flex-col items-center justify-center border-b-4 border-b-orange-600">
-                      <div className="p-3 bg-orange-50 rounded-full text-orange-600 mb-2"><CheckCircle size={24}/></div>
-                      <div className="text-2xl font-black text-slate-800">{statusCounts['GRADED'] || 0}</div>
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Items Graded</div>
+                      <div className="p-3 bg-orange-50 rounded-full text-orange-600 mb-2"><Timer size={24}/></div>
+                      <div className="text-2xl font-black text-slate-800">
+                          {formatTime(relevantAssignments.reduce((acc,a)=>acc+(parseInt(a.estimatedTime)||0),0))}
+                      </div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Time Spent</div>
                   </Card>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* Status Distribution Graph */}
                   <Card className="lg:col-span-1 flex flex-col items-center">
                       <h4 className="font-bold text-slate-700 mb-6 w-full flex items-center gap-2"><Palette size={18} className="text-slate-400"/> Status Distribution</h4>
                       <div className="relative w-48 h-48 rounded-full shadow-inner mb-6" style={{ background: totalItems > 0 ? `conic-gradient(${conicSectors.slice(0, -2)})` : '#f1f5f9' }}>
@@ -512,7 +532,6 @@ export default function GradeTracker() {
                       </div>
                   </Card>
 
-                  {/* Class List Breakdown */}
                   <Card className="lg:col-span-2">
                       <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><BookOpen size={18} className="text-slate-400"/> Current Class Standings</h4>
                       <div className="space-y-4">
@@ -539,7 +558,6 @@ export default function GradeTracker() {
                   </Card>
               </div>
 
-              {/* Chronological Assignment Log */}
               <Card>
                   <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><Clock size={18} className="text-slate-400"/> Chronological History</h4>
                   <div className="overflow-x-auto no-scrollbar">
@@ -551,12 +569,12 @@ export default function GradeTracker() {
                                   <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Item Name</th>
                                   <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status</th>
                                   <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Grade</th>
-                                  <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Score</th>
+                                  <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Time</th>
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-50">
                               {relevantAssignments
-                                .sort((a,b) => b.dueDate.localeCompare(a.dueDate)) // Newest first
+                                .sort((a,b) => b.dueDate.localeCompare(a.dueDate))
                                 .map(a => {
                                   const cls = classes.find(c => c.id === a.classId);
                                   const scorePercent = a.total > 0 ? (a.grade / a.total) * 100 : 0;
@@ -572,7 +590,7 @@ export default function GradeTracker() {
                                           <td className="py-4 text-sm font-medium text-slate-800">{a.name}</td>
                                           <td className="py-4"><Badge status={a.status} customStatuses={customStatuses}/></td>
                                           <td className={`py-4 text-right text-sm font-black ${gradeColor}`}>{a.status === 'GRADED' ? `${scorePercent.toFixed(0)}%` : '--'}</td>
-                                          <td className="py-4 text-right text-xs font-mono text-slate-400">{a.grade} / {a.total}</td>
+                                          <td className="py-4 text-right text-xs font-mono text-slate-400">{formatTime(a.estimatedTime || 0)}</td>
                                       </tr>
                                   )
                               })}
@@ -607,26 +625,62 @@ export default function GradeTracker() {
                       {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><div key={d}>{d}</div>)}
                   </div>
                   <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px">
-                      {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white min-h-[100px]"></div>)}
+                      {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white min-h-[120px]"></div>)}
                       {Array.from({length: daysInMonth}).map((_,i)=>{
                           const d = i+1;
                           const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                          const items = [...assignments.filter(a=>a.dueDate===dateStr), ...events.filter(e=>e.date===dateStr)];
+                          const dayAssignments = assignments.filter(a=>a.dueDate===dateStr);
+                          const dayEvents = events.filter(e=>e.date===dateStr);
+                          const totalItems = dayAssignments.length + dayEvents.length;
+
                           return (
-                              <div key={d} className="bg-white min-h-[100px] p-2 hover:bg-blue-50 relative">
-                                  <div className={`text-sm font-bold mb-1 ${new Date().toDateString() === new Date(year,month,d).toDateString() ? 'text-blue-600':''}`}>{d}</div>
-                                  <div className="space-y-1">
-                                      {items.map((item, idx) => (
-                                          <div key={idx} onClick={()=>{ if(item.grade!==undefined){setActiveAssignment(item); setIsEditModalOpen(true);} }} className={`text-[10px] px-1 rounded truncate cursor-pointer ${item.grade!==undefined ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}`}>
-                                              {item.name || item.title}
+                              <div key={d} onClick={() => totalItems > 0 && setSelectedDayItems({ date: dateStr, items: [...dayAssignments, ...dayEvents] })} className="bg-white min-h-[120px] p-2 hover:bg-blue-50 relative cursor-pointer group transition-colors">
+                                  <div className={`text-sm font-bold mb-1 ${new Date().toDateString() === new Date(year,month,d).toDateString() ? 'bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center' : ''}`}>{d}</div>
+                                  
+                                  <div className="flex flex-col items-center justify-center h-full mt-2">
+                                      {dayAssignments.length > 0 && (
+                                          <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-md ring-2 ring-white group-hover:scale-110 transition-transform">
+                                              {dayAssignments.length}
                                           </div>
-                                      ))}
+                                      )}
+                                      {dayEvents.length > 0 && (
+                                          <div className="mt-1 w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                                      )}
                                   </div>
                               </div>
                           )
                       })}
                   </div>
               </div>
+
+              {/* Day Drill-Down List */}
+              {selectedDayItems && (
+                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                      <div className="bg-white w-full max-w-md rounded-xl shadow-2xl p-6">
+                          <div className="flex justify-between items-center mb-4">
+                              <h3 className="font-bold text-lg">Due on {selectedDayItems.date}</h3>
+                              <button onClick={()=>setSelectedDayItems(null)}><X/></button>
+                          </div>
+                          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2 no-scrollbar">
+                              {selectedDayItems.items.map((item, idx) => (
+                                  <div key={idx} onClick={() => { 
+                                      if (item.grade !== undefined) { 
+                                          setActiveAssignment(item); 
+                                          setIsEditModalOpen(true); 
+                                          setSelectedDayItems(null);
+                                      } 
+                                  }} className={`p-3 rounded-lg border-l-4 shadow-sm hover:translate-x-1 transition-transform cursor-pointer ${item.grade !== undefined ? 'border-blue-500 bg-blue-50' : 'border-purple-500 bg-purple-50'}`}>
+                                      <div className="font-bold text-slate-800">{item.name || item.title}</div>
+                                      <div className="text-xs text-slate-500 flex justify-between mt-1">
+                                          <span>{item.category || item.type}</span>
+                                          {item.estimatedTime && <span><Timer size={10} className="inline mr-1"/>{formatTime(item.estimatedTime)}</span>}
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  </div>
+              )}
           </div>
       );
   };
@@ -687,7 +741,7 @@ export default function GradeTracker() {
                          <div className="text-4xl font-bold">{getCumulativeGPA()}</div>
                      </Card>
                      <Card><div className="text-gray-500 text-sm">Upcoming Tasks</div><div className="text-3xl font-bold">{assignments.filter(a=>a.status==='TODO').length}</div></Card>
-                     <Card><div className="text-gray-500 text-sm">Completed Items</div><div className="text-3xl font-bold">{assignments.filter(a=>a.status==='GRADED').length}</div></Card>
+                     <Card><div className="text-gray-500 text-sm">Pending Workload</div><div className="text-3xl font-bold">{formatTime(assignments.filter(a=>a.status!=='GRADED').reduce((acc,a)=>acc+(parseInt(a.estimatedTime)||0),0))}</div></Card>
                  </div>
                  
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -709,6 +763,7 @@ export default function GradeTracker() {
                                                 <div className="text-xs text-gray-500 flex gap-2 mt-1">
                                                     <span className="font-bold">{cls?.code}</span>
                                                     <span>{a.dueDate}</span>
+                                                    <span>• {formatTime(a.estimatedTime || 0)}</span>
                                                 </div>
                                             </div>
                                             <Badge status={a.status} customStatuses={customStatuses} />
@@ -765,7 +820,18 @@ export default function GradeTracker() {
                              <h3 className="font-bold">Assignments</h3>
                              <button onClick={() => {
                                  const newId = crypto.randomUUID();
-                                 const newAsg = { id: newId, classId: activeClassId, name: "New Assignment", status: "TODO", grade: 0, total: 100, dueDate: new Date().toISOString().split('T')[0], category: cls?.categories?.[0]?.name || "Homework" };
+                                 const defaultCategory = cls?.categories?.[0];
+                                 const newAsg = { 
+                                     id: newId, 
+                                     classId: activeClassId, 
+                                     name: "New Assignment", 
+                                     status: "TODO", 
+                                     grade: 0, 
+                                     total: 100, 
+                                     dueDate: new Date().toISOString().split('T')[0], 
+                                     category: defaultCategory?.name || "Homework",
+                                     estimatedTime: defaultCategory?.defaultTime || 30
+                                 };
                                  setAssignments([...assignments, newAsg]);
                                  saveData({ assignments: [...assignments, newAsg] });
                                  setActiveAssignment(newAsg);
@@ -777,7 +843,7 @@ export default function GradeTracker() {
                                  <div key={a.id} onClick={() => { setActiveAssignment(a); setIsEditModalOpen(true); }} className="flex justify-between p-3 hover:bg-gray-50 rounded border-b border-gray-50 cursor-pointer items-center">
                                      <div className="flex-1">
                                          <div className="font-medium">{a.name}</div>
-                                         <div className="text-xs text-gray-500 flex gap-2"><span>{a.category}</span><span>•</span><span>{a.dueDate}</span></div>
+                                         <div className="text-xs text-gray-500 flex gap-2"><span>{a.category}</span><span>•</span><span>{a.dueDate}</span><span>•</span><span>{formatTime(a.estimatedTime || 0)}</span></div>
                                      </div>
                                      <div className="flex items-center gap-4">
                                          <Badge status={a.status} customStatuses={customStatuses} />
@@ -800,72 +866,42 @@ export default function GradeTracker() {
                       <h3 className="font-bold text-xl">Global Settings</h3>
                       <button onClick={()=>setIsGlobalSettingsOpen(false)}><X size={24}/></button>
                   </div>
-                  
                   <div className="space-y-6">
                       <div>
                           <label className="text-sm font-bold block mb-2">University Name</label>
                           <input value={universityName} onChange={e=>setUniversityName(e.target.value)} className="border p-2 w-full rounded"/>
                       </div>
-
-                      {/* Manage Statuses */}
                       <div className="border-t pt-4">
                           <div className="flex justify-between items-center mb-4">
                               <label className="text-sm font-bold block">Manage Custom Statuses</label>
-                              <button 
-                                onClick={() => setCustomStatuses([...customStatuses, { id: crypto.randomUUID(), label: 'New', color: STATUS_COLORS[0].class, countsInGrade: false }])}
-                                className="text-blue-600 text-xs font-bold"
-                              >
-                                + ADD STATUS
-                              </button>
+                              <button onClick={() => setCustomStatuses([...customStatuses, { id: crypto.randomUUID(), label: 'New', color: STATUS_COLORS[0].class, countsInGrade: false }])} className="text-blue-600 text-xs font-bold">+ ADD STATUS</button>
                           </div>
                           <div className="space-y-3">
                               {customStatuses.map((s, i) => (
                                   <div key={s.id} className="bg-gray-50 p-3 rounded-lg border flex flex-col gap-3">
                                       <div className="flex gap-2 items-center">
-                                          <input 
-                                            value={s.label} 
-                                            onChange={(e) => {
-                                                const news = [...customStatuses]; news[i].label = e.target.value; setCustomStatuses(news);
-                                            }} 
-                                            className="border p-1 flex-1 rounded text-sm"
-                                          />
+                                          <input value={s.label} onChange={(e) => { const news = [...customStatuses]; news[i].label = e.target.value; setCustomStatuses(news); }} className="border p-1 flex-1 rounded text-sm"/>
                                           <button onClick={() => setCustomStatuses(customStatuses.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
                                       </div>
                                       <div className="flex justify-between items-center">
                                           <div className="flex gap-1 overflow-x-auto no-scrollbar">
                                               {STATUS_COLORS.map(c => (
-                                                  <button 
-                                                    key={c.name}
-                                                    onClick={() => { const news = [...customStatuses]; news[i].color = c.class; setCustomStatuses(news); }}
-                                                    className={`w-6 h-6 rounded-full border-2 ${c.class.split(' ')[0]} ${s.color === c.class ? 'border-gray-800' : 'border-transparent'}`}
-                                                  />
+                                                  <button key={c.name} onClick={() => { const news = [...customStatuses]; news[i].color = c.class; setCustomStatuses(news); }} className={`w-6 h-6 rounded-full border-2 ${c.class.split(' ')[0]} ${s.color === c.class ? 'border-gray-800' : 'border-transparent'}`}/>
                                               ))}
                                           </div>
                                           <label className="flex items-center gap-2 text-xs font-bold text-gray-600">
-                                              <input 
-                                                type="checkbox" 
-                                                checked={s.countsInGrade} 
-                                                onChange={(e) => {
-                                                    const news = [...customStatuses]; news[i].countsInGrade = e.target.checked; setCustomStatuses(news);
-                                                }}
-                                              />
-                                              Counts in Grade
+                                              <input type="checkbox" checked={s.countsInGrade} onChange={(e) => { const news = [...customStatuses]; news[i].countsInGrade = e.target.checked; setCustomStatuses(news); }}/> Counts in Grade
                                           </label>
                                       </div>
                                   </div>
                               ))}
                           </div>
                       </div>
-                      
                       <div className="border-t pt-4">
                           <label className="text-sm block mb-2 font-bold">Security</label>
                           <input type="password" id="newPass" placeholder="New Access Key" className="border p-2 w-full rounded mb-2"/>
-                          <button onClick={()=>{
-                              const pass = document.getElementById('newPass').value;
-                              if(pass) handleUpdatePassword(pass);
-                          }} className="bg-gray-800 text-white px-3 py-1 rounded text-xs">Update Key</button>
+                          <button onClick={()=>{ const pass = document.getElementById('newPass').value; if(pass) handleUpdatePassword(pass); }} className="bg-gray-800 text-white px-3 py-1 rounded text-xs">Update Key</button>
                       </div>
-
                       <div className="border-t pt-4 flex gap-2">
                           <button onClick={() => { saveData({ universityName, customStatuses }); setIsGlobalSettingsOpen(false); }} className="flex-1 bg-blue-600 text-white p-3 rounded-lg font-bold shadow-md">Save Configuration</button>
                       </div>
@@ -881,7 +917,7 @@ export default function GradeTracker() {
                  <form onSubmit={(e) => { 
                      e.preventDefault(); 
                      const fd = new FormData(e.target);
-                     const newClass = { id: crypto.randomUUID(), name: fd.get('name'), code: fd.get('code'), credits: fd.get('credits'), categories: [{name: 'Homework', weight: 0}], gradingType: 'POINTS' };
+                     const newClass = { id: crypto.randomUUID(), name: fd.get('name'), code: fd.get('code'), credits: fd.get('credits'), categories: [{name: 'Homework', weight: 0, defaultTime: 30}], gradingType: 'POINTS' };
                      setClasses([...classes, newClass]);
                      saveData({ classes: [...classes, newClass] });
                      setIsAddClassModalOpen(false);
@@ -917,6 +953,23 @@ export default function GradeTracker() {
                                </select>
                            </div>
                        </div>
+                       <div className="grid grid-cols-2 gap-4">
+                           <div>
+                               <label className="text-xs text-gray-500">Category</label>
+                               <select value={activeAssignment.category} onChange={e => {
+                                   const catName = e.target.value;
+                                   const cls = classes.find(c => c.id === activeAssignment.classId);
+                                   const cat = cls?.categories?.find(c => c.name === catName);
+                                   setActiveAssignment({...activeAssignment, category: catName, estimatedTime: cat?.defaultTime || 30});
+                               }} className="border p-2 w-full rounded">
+                                   {classes.find(c => c.id === activeAssignment.classId)?.categories?.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                               </select>
+                           </div>
+                           <div>
+                               <label className="text-xs text-gray-500">Est Time (mins)</label>
+                               <input type="number" value={activeAssignment.estimatedTime} onChange={e => setActiveAssignment({...activeAssignment, estimatedTime: e.target.value})} className="border p-2 w-full rounded"/>
+                           </div>
+                       </div>
                        <div className="flex justify-between pt-4 border-t mt-4">
                            <button onClick={() => handleDeleteAssignment(activeAssignment.id)} className="text-red-500 text-sm flex items-center gap-1"><Trash2 size={16}/> Delete</button>
                            <button onClick={() => handleUpdateAssignment(activeAssignment)} className="bg-blue-600 text-white px-4 py-2 rounded font-bold">Save Changes</button>
@@ -931,3 +984,4 @@ export default function GradeTracker() {
     </div>
   );
 }
+
