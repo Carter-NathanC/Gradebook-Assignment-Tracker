@@ -73,8 +73,6 @@ const authenticate = (req, res, next) => {
         const authData = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
 
         // Compare cookie hash with stored hash (Constant time)
-        // Note: In a real app, token would be a session ID, but for this local app,
-        // we are storing the hashed key in the httpOnly cookie for simplicity/statelessness.
         const valid = crypto.timingSafeEqual(
             Buffer.from(token), 
             Buffer.from(authData.passwordHash)
@@ -111,7 +109,7 @@ app.post('/api/login', (req, res) => {
             // Set HttpOnly cookie
             res.cookie('auth_token', submittedHash, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production', // Use secure in prod
+                secure: process.env.NODE_ENV === 'production',
                 sameSite: 'strict',
                 maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
             });
@@ -171,7 +169,6 @@ app.post('/api/change-password', authenticate, (req, res) => {
         const success = atomicWrite(AUTH_FILE, { passwordHash: newHash });
         
         if (success) {
-            // Update the cookie immediately
             res.cookie('auth_token', newHash, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
