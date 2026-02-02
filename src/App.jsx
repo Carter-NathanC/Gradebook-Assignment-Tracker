@@ -4,10 +4,10 @@ import {
   LogOut, Plus, Settings, Calendar as CalendarIcon, 
   ChevronRight, ChevronLeft, Trash2, X, Download, Wrench, 
   Printer, FileText, Lock, Shield, Key, Save,
-  AlertTriangle, ExternalLink, Palette
+  AlertTriangle, ExternalLink, Palette, TrendingUp, Target
 } from 'lucide-react';
 
-/* GRADE TRACKER FRONTEND - Dynamic Status Update */
+/* GRADE TRACKER FRONTEND - Enhanced Reports & Dynamic Statuses */
 
 // --- Configuration ---
 const DEFAULT_THEME = {
@@ -61,7 +61,7 @@ const Card = ({ children, className = "" }) => (
 
 const Badge = ({ status, customStatuses = [] }) => {
   const config = customStatuses.find(s => s.id === status) || DEFAULT_STATUSES[0];
-  return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${config.color}`}>{config.label}</span>;
+  return <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase ${config.color}`}>{config.label}</span>;
 };
 
 // --- Main App ---
@@ -181,13 +181,12 @@ export default function GradeTracker() {
   // --- Logic ---
   const calculateClassGrade = (classId) => {
     const cls = classes.find(c => c.id === classId);
-    if (!cls) return { percent: 0, letter: 'N/A', gpa: 0.0 };
+    if (!cls) return { percent: 0, letter: 'N/A', gpa: 0.0, earned: 0, total: 0 };
 
     const now = new Date().toLocaleDateString('en-CA');
     let classAssignments = assignments.filter(a => {
         if (a.classId !== classId) return false;
         const statusConfig = customStatuses.find(s => s.id === a.status);
-        // Count if status explicitly marks it as countable OR if it's past due (for missing)
         return statusConfig?.countsInGrade || (a.dueDate && a.dueDate < now);
     });
 
@@ -418,66 +417,169 @@ export default function GradeTracker() {
   };
 
   const ReportView = () => {
-      const stats = assignments.reduce((acc, curr) => {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const relevantAssignments = assignments.filter(a => a.dueDate <= todayStr);
+      
+      // Calculate Stats
+      const totalPossible = relevantAssignments.reduce((acc, a) => acc + (parseFloat(a.total) || 0), 0);
+      const totalEarned = relevantAssignments.reduce((acc, a) => acc + (parseFloat(a.grade) || 0), 0);
+      const avgScore = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
+      
+      const statusCounts = relevantAssignments.reduce((acc, curr) => {
           acc[curr.status] = (acc[curr.status] || 0) + 1;
           return acc;
       }, {});
-      const total = assignments.length;
+
+      const totalItems = relevantAssignments.length;
+      
+      // Graph Data Preparation
+      let conicSectors = "";
+      let lastPercent = 0;
+      const sectors = customStatuses.map(status => {
+          const count = statusCounts[status.id] || 0;
+          const percent = totalItems > 0 ? (count / totalItems) * 100 : 0;
+          const sector = { ...status, count, percent, start: lastPercent };
+          if (percent > 0) {
+              const colorHex = status.color.includes('blue') ? '#3b82f6' : 
+                               status.color.includes('green') ? '#10b981' : 
+                               status.color.includes('yellow') ? '#f59e0b' : 
+                               status.color.includes('red') ? '#ef4444' : 
+                               status.color.includes('purple') ? '#8b5cf6' : 
+                               status.color.includes('orange') ? '#f97316' : '#94a3b8';
+              conicSectors += `${colorHex} ${lastPercent}% ${lastPercent + percent}%, `;
+              lastPercent += percent;
+          }
+          return sector;
+      });
 
       return (
-          <div className="space-y-8 animate-fade-in print:w-full">
-              <div className="flex justify-between items-center print:hidden">
-                  <h2 className="text-2xl font-bold text-slate-800">Performance Report</h2>
+          <div className="space-y-8 animate-fade-in print:p-4">
+              <div className="flex justify-between items-end print:hidden">
+                  <div>
+                      <h2 className="text-3xl font-bold text-slate-800">Academic Integrity Report</h2>
+                      <p className="text-slate-500">Summary of all performance metrics up to {new Date().toLocaleDateString()}</p>
+                  </div>
                   <div className="flex gap-2">
-                      <button onClick={downloadCSV} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 shadow"><Download size={16}/> CSV</button>
-                      <button onClick={() => window.print()} className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded shadow"><Printer size={16}/> Print</button>
+                      <button onClick={downloadCSV} className="flex items-center gap-2 bg-slate-100 text-slate-700 px-4 py-2 rounded-lg font-bold hover:bg-slate-200 transition-colors"><Download size={18}/> Export CSV</button>
+                      <button onClick={() => window.print()} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all"><Printer size={18}/> Print Report</button>
                   </div>
               </div>
-              <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 print:shadow-none print:border-none">
-                  <div className="flex justify-between border-b border-slate-100 pb-6 mb-6">
-                      <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 bg-blue-900 rounded-lg flex items-center justify-center text-white font-bold text-xl">{universityName.charAt(0)}</div>
-                          <div><h1 className="text-2xl font-bold text-slate-800">{universityName}</h1><p className="text-sm text-slate-500">Academic Records</p></div>
+
+              {/* Top KPIs */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <Card className="flex flex-col items-center justify-center border-b-4 border-b-blue-600">
+                      <div className="p-3 bg-blue-50 rounded-full text-blue-600 mb-2"><GraduationCap size={24}/></div>
+                      <div className="text-2xl font-black text-slate-800">{getCumulativeGPA()}</div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cumulative GPA</div>
+                  </Card>
+                  <Card className="flex flex-col items-center justify-center border-b-4 border-b-green-600">
+                      <div className="p-3 bg-green-50 rounded-full text-green-600 mb-2"><TrendingUp size={24}/></div>
+                      <div className="text-2xl font-black text-slate-800">{avgScore.toFixed(1)}%</div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Average Score</div>
+                  </Card>
+                  <Card className="flex flex-col items-center justify-center border-b-4 border-b-purple-600">
+                      <div className="p-3 bg-purple-50 rounded-full text-purple-600 mb-2"><Target size={24}/></div>
+                      <div className="text-2xl font-black text-slate-800">{totalItems}</div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Items Due</div>
+                  </Card>
+                  <Card className="flex flex-col items-center justify-center border-b-4 border-b-orange-600">
+                      <div className="p-3 bg-orange-50 rounded-full text-orange-600 mb-2"><CheckCircle size={24}/></div>
+                      <div className="text-2xl font-black text-slate-800">{statusCounts['GRADED'] || 0}</div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Items Graded</div>
+                  </Card>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Status Distribution Graph */}
+                  <Card className="lg:col-span-1 flex flex-col items-center">
+                      <h4 className="font-bold text-slate-700 mb-6 w-full flex items-center gap-2"><Palette size={18} className="text-slate-400"/> Status Distribution</h4>
+                      <div className="relative w-48 h-48 rounded-full shadow-inner mb-6" style={{ background: totalItems > 0 ? `conic-gradient(${conicSectors.slice(0, -2)})` : '#f1f5f9' }}>
+                          <div className="absolute inset-8 bg-white rounded-full flex flex-col items-center justify-center shadow-sm">
+                               <span className="text-3xl font-black text-slate-800">{totalItems}</span>
+                               <span className="text-[10px] font-bold text-slate-400 uppercase">Tasks</span>
+                          </div>
                       </div>
-                      <div className="text-right text-xs text-slate-400">Generated: {new Date().toLocaleDateString()}</div>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-10">
-                      <div className="p-4 bg-slate-50 rounded-lg border">
-                          <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">GPA</div>
-                          <div className="text-3xl font-bold text-blue-800 mt-1">{getCumulativeGPA()}</div>
+                      <div className="w-full space-y-2">
+                          {sectors.filter(s => s.count > 0).map(s => (
+                              <div key={s.id} className="flex justify-between items-center text-xs">
+                                  <div className="flex items-center gap-2">
+                                      <div className={`w-3 h-3 rounded-full ${s.color.split(' ')[0]}`}></div>
+                                      <span className="font-medium text-slate-600">{s.label}</span>
+                                  </div>
+                                  <span className="font-bold text-slate-800">{s.count} ({s.percent.toFixed(0)}%)</span>
+                              </div>
+                          ))}
                       </div>
-                      <div className="p-4 bg-slate-50 rounded-lg border">
-                          <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Credits</div>
-                          <div className="text-3xl font-bold text-slate-800 mt-1">{classes.reduce((a,c)=>a+(parseFloat(c.credits)||0),0)}</div>
+                  </Card>
+
+                  {/* Class List Breakdown */}
+                  <Card className="lg:col-span-2">
+                      <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><BookOpen size={18} className="text-slate-400"/> Current Class Standings</h4>
+                      <div className="space-y-4">
+                          {classes.map((c, idx) => {
+                              const s = calculateClassGrade(c.id);
+                              const classColor = CLASS_COLORS[idx % CLASS_COLORS.length];
+                              return (
+                                  <div key={c.id} className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                                      <div className="flex items-center gap-4">
+                                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-black ${classColor}`}>{c.code[0]}</div>
+                                          <div>
+                                              <div className="font-bold text-slate-800">{c.name}</div>
+                                              <div className="text-[10px] font-bold text-slate-400 uppercase">{c.code} • {c.credits} Credits</div>
+                                          </div>
+                                      </div>
+                                      <div className="text-right">
+                                          <div className="text-xl font-black text-blue-700">{s.letter}</div>
+                                          <div className="text-[10px] font-bold text-slate-500">{s.percent.toFixed(1)}%</div>
+                                      </div>
+                                  </div>
+                              )
+                          })}
                       </div>
-                      <div className="p-4 bg-slate-50 rounded-lg border">
-                          <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Assignments</div>
-                          <div className="text-3xl font-bold text-slate-800 mt-1">{total}</div>
-                      </div>
-                      <div className="p-4 bg-slate-50 rounded-lg border">
-                          <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Classes</div>
-                          <div className="text-3xl font-bold text-slate-800 mt-1">{classes.length}</div>
-                      </div>
-                  </div>
-                  <div className="mt-8">
-                      <h4 className="font-bold mb-4">Detailed Breakdown</h4>
-                      <table className="w-full text-left text-xs">
-                          <thead><tr className="border-b"><th className="pb-2">Class</th><th className="pb-2">Grade</th><th className="pb-2 text-right">Points</th></tr></thead>
-                          <tbody>
-                              {classes.map(c => {
-                                  const s = calculateClassGrade(c.id);
+                  </Card>
+              </div>
+
+              {/* Chronological Assignment Log */}
+              <Card>
+                  <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><Clock size={18} className="text-slate-400"/> Chronological History</h4>
+                  <div className="overflow-x-auto no-scrollbar">
+                      <table className="w-full text-left">
+                          <thead>
+                              <tr className="border-b border-slate-100">
+                                  <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Date</th>
+                                  <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Class</th>
+                                  <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Item Name</th>
+                                  <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status</th>
+                                  <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Grade</th>
+                                  <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Score</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                              {relevantAssignments
+                                .sort((a,b) => b.dueDate.localeCompare(a.dueDate)) // Newest first
+                                .map(a => {
+                                  const cls = classes.find(c => c.id === a.classId);
+                                  const scorePercent = a.total > 0 ? (a.grade / a.total) * 100 : 0;
+                                  let gradeColor = "text-slate-400";
+                                  if (a.status === 'GRADED') {
+                                      gradeColor = scorePercent >= 90 ? "text-green-600" : scorePercent >= 80 ? "text-blue-600" : scorePercent >= 70 ? "text-orange-600" : "text-red-600";
+                                  }
+                                  
                                   return (
-                                      <tr key={c.id} className="border-b border-gray-50">
-                                          <td className="py-2 font-bold">{c.name} ({c.code})</td>
-                                          <td className="py-2">{s.percent.toFixed(1)}% ({s.letter})</td>
-                                          <td className="py-2 text-right">{s.earned.toFixed(1)} / {s.total.toFixed(1)}</td>
+                                      <tr key={a.id} className="hover:bg-slate-50 transition-colors group">
+                                          <td className="py-4 text-xs text-slate-500 font-mono">{a.dueDate}</td>
+                                          <td className="py-4 text-xs font-bold text-slate-700">{cls?.code || 'N/A'}</td>
+                                          <td className="py-4 text-sm font-medium text-slate-800">{a.name}</td>
+                                          <td className="py-4"><Badge status={a.status} customStatuses={customStatuses}/></td>
+                                          <td className={`py-4 text-right text-sm font-black ${gradeColor}`}>{a.status === 'GRADED' ? `${scorePercent.toFixed(0)}%` : '--'}</td>
+                                          <td className="py-4 text-right text-xs font-mono text-slate-400">{a.grade} / {a.total}</td>
                                       </tr>
                                   )
                               })}
                           </tbody>
                       </table>
                   </div>
-              </div>
+              </Card>
           </div>
       );
   };
