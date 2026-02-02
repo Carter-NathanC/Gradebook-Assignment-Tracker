@@ -5,14 +5,15 @@ import {
   ChevronRight, ChevronLeft, Trash2, X, Download, Wrench, 
   Printer, FileText, Lock, AlertTriangle, 
   Palette, TrendingUp, Target, Timer, Moon, Sun, Search,
-  Database
+  Database, CheckCircle
 } from 'lucide-react';
 
-/* GRADE TRACKER FRONTEND - Enhanced 
+/* GRADE TRACKER FRONTEND
   ---------------------------------
   - Architecture: Custom Hooks for API & Grading
-  - Security: HttpOnly Cookies, Input Validation
-  - Features: Dark Mode, Search, Calendar, Reports
+  - Feature: "Today's Plan" Logic (Smart Daily To-Do)
+  - Feature: 7-Day Workload Scope
+  - Feature: Visual Due Date cues (Red/Blue)
 */
 
 // --- CONSTANTS & DEFAULTS ---
@@ -57,9 +58,38 @@ const CLASS_COLORS = [
     'border-teal-200 text-teal-800 bg-teal-50 dark:bg-teal-900/20 dark:text-teal-200 dark:border-teal-800',
 ];
 
+// --- HELPER FUNCTIONS ---
+
+const formatTime = (mins) => {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+};
+
+// Check if an assignment is considered "Active" (Not turned in or graded)
+const isActive = (status) => {
+    return status !== 'TURNED_IN' && status !== 'GRADED';
+};
+
+// Calculate Date Range for "Next 7 Days"
+const getWeekRange = () => {
+    const now = new Date();
+    const today = now.toLocaleDateString('en-CA');
+    
+    const nextWeek = new Date(now);
+    nextWeek.setDate(now.getDate() + 7);
+    const nextWeekStr = nextWeek.toLocaleDateString('en-CA');
+
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    const tomorrowStr = tomorrow.toLocaleDateString('en-CA');
+
+    return { today, tomorrowStr, nextWeekStr };
+};
+
 // --- HOOKS ---
 
-// Hook: Data Persistence & API
 const useApi = () => {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -130,7 +160,6 @@ const useApi = () => {
     return { isAuthenticated, loading, data, saveData, login, logout, apiCall };
 };
 
-// Hook: Grading Logic (Memoized)
 const useGrading = (classes, assignments, customStatuses) => {
     return useMemo(() => {
         const gradeMap = {};
@@ -205,7 +234,99 @@ const useGrading = (classes, assignments, customStatuses) => {
     }, [classes, assignments, customStatuses]);
 };
 
-// Hook: Theme
+// Hook: Daily Plan Management
+// Logic: Snapshot specific items for "Today" based on load capacity, preventing churn.
+const useDailyPlan = (assignments, classes) => {
+    const [plan, setPlan] = useState([]);
+
+    useEffect(() => {
+        if (!assignments || assignments.length === 0) return;
+
+        const generatePlan = () => {
+            const { today, tomorrowStr, nextWeekStr } = getWeekRange();
+            const stored = localStorage.getItem('gt_daily_plan_v2');
+            let storedData = stored ? JSON.parse(stored) : null;
+
+            // Helper: Calculate Impact (Weight * Points)
+            const getImpact = (a) => {
+                const cls = classes.find(c => c.id === a.classId);
+                if (!cls) return 0;
+                let weight = 1;
+                if (cls.gradingType === 'WEIGHTED' && cls.categories) {
+                    const cat = cls.categories.find(c => c.name === a.category);
+                    if (cat) weight = parseFloat(cat.weight) || 0;
+                }
+                return (parseFloat(a.total) || 0) * weight;
+            };
+
+            // 1. Identify all active work due in Next 7 Days
+            const activeAssignments = assignments.filter(a => {
+                if (!isActive(a.status)) return false;
+                return a.dueDate >= today && a.dueDate <= nextWeekStr;
+            });
+
+            // 2. Check for existing valid plan for TODAY
+            if (storedData && storedData.date === today) {
+                // Return only active items from the stored snapshot
+                // (If user turned it in, it drops off the list, but NO new items appear)
+                const currentPlanIds = storedData.ids;
+                const items = assignments.filter(a => currentPlanIds.includes(a.id) && isActive(a.status));
+                
+                // Sort by Due Date, then Impact
+                items.sort((a,b) => {
+                     if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+                     return getImpact(b) - getImpact(a);
+                });
+                setPlan(items);
+                return;
+            }
+
+            // 3. Generate New Plan (If new day)
+            const totalWeekLoad = activeAssignments.length;
+            const dailyQuota = Math.ceil(totalWeekLoad / 7) || 0;
+
+            // Separate Urgent (Today/Tomorrow) from Others
+            const urgentItems = activeAssignments.filter(a => a.dueDate <= tomorrowStr);
+            const otherItems = activeAssignments.filter(a => a.dueDate > tomorrowStr);
+
+            // Sort Others by Date then Impact
+            otherItems.sort((a,b) => {
+                if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+                return getImpact(b) - getImpact(a);
+            });
+
+            // Fill the slots
+            // Always include everything due Today/Tomorrow
+            let selectedIds = urgentItems.map(a => a.id);
+            
+            // If we have room left in quota, add high priority items from later in the week
+            let slotsRemaining = dailyQuota - selectedIds.length;
+            if (slotsRemaining > 0) {
+                const extras = otherItems.slice(0, slotsRemaining);
+                selectedIds = [...selectedIds, ...extras.map(a => a.id)];
+            }
+
+            // Save Snapshot
+            localStorage.setItem('gt_daily_plan_v2', JSON.stringify({
+                date: today,
+                ids: selectedIds
+            }));
+
+            // Set State
+            const finalItems = assignments.filter(a => selectedIds.includes(a.id) && isActive(a.status));
+            finalItems.sort((a,b) => {
+                 if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+                 return getImpact(b) - getImpact(a);
+            });
+            setPlan(finalItems);
+        };
+
+        generatePlan();
+    }, [assignments, classes]); // Re-run if assignments change (e.g. status update) to filter completed items
+
+    return plan;
+};
+
 const useTheme = () => {
     const [isDark, setIsDark] = useState(() => localStorage.getItem('gt_theme') === 'dark');
     useEffect(() => {
@@ -230,27 +351,25 @@ const Badge = ({ status, customStatuses }) => {
   return <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase ${config.color}`}>{config.label}</span>;
 };
 
-const formatTime = (mins) => {
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-};
-
 // 1. Dashboard View
-const DashboardView = ({ classes, assignments, customStatuses, grades, gpa, onNavigate, onEditAssignment }) => {
+const DashboardView = ({ classes, assignments, customStatuses, grades, gpa, dailyPlan, onNavigate, onEditAssignment }) => {
     const [searchTerm, setSearchTerm] = useState("");
-    
-    // Filter logic
-    const priorityAssignments = assignments
-        .filter(a => {
-            if (searchTerm && !a.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-            const sc = customStatuses.find(s=>s.id===a.status);
-            return !sc?.countsInGrade || a.status === 'TODO';
-        })
-        .sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate));
+    const { today, tomorrowStr, nextWeekStr } = getWeekRange();
 
-    const pendingMinutes = assignments.filter(a=>a.status!=='GRADED').reduce((acc,a)=>acc+(parseInt(a.estimatedTime)||0),0);
+    // Stats Logic (Scoped to Next 7 Days)
+    const next7DaysAssignments = assignments.filter(a => {
+        return isActive(a.status) && a.dueDate >= today && a.dueDate <= nextWeekStr;
+    });
+
+    const pendingMinutes = next7DaysAssignments.reduce((acc,a)=>acc+(parseInt(a.estimatedTime)||0),0);
+    
+    // Filter Daily Plan for Search
+    const visiblePlan = dailyPlan.filter(a => {
+        if (searchTerm && !a.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+        return true;
+    });
+    
+    const todaysPlanTime = visiblePlan.reduce((acc, a) => acc + (parseInt(a.estimatedTime)||0), 0);
 
     return (
         <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
@@ -259,30 +378,44 @@ const DashboardView = ({ classes, assignments, customStatuses, grades, gpa, onNa
                      <div className="text-blue-100 text-sm">Cumulative GPA</div>
                      <div className="text-4xl font-bold">{gpa}</div>
                  </Card>
-                 <Card><div className="text-gray-500 dark:text-gray-400 text-sm">Upcoming Tasks</div><div className="text-3xl font-bold text-gray-800 dark:text-gray-100">{assignments.filter(a=>a.status==='TODO').length}</div></Card>
-                 <Card><div className="text-gray-500 dark:text-gray-400 text-sm">Pending Workload</div><div className="text-3xl font-bold text-gray-800 dark:text-gray-100">{formatTime(pendingMinutes)}</div></Card>
+                 <Card>
+                     <div className="text-gray-500 dark:text-gray-400 text-sm">Workload (Next 7 Days)</div>
+                     <div className="text-3xl font-bold text-gray-800 dark:text-gray-100">{next7DaysAssignments.length} <span className="text-xs text-gray-400 font-normal">tasks</span></div>
+                 </Card>
+                 <Card>
+                     <div className="text-gray-500 dark:text-gray-400 text-sm">Today's Est. Time</div>
+                     <div className="text-3xl font-bold text-gray-800 dark:text-gray-100">{formatTime(todaysPlanTime)}</div>
+                 </Card>
              </div>
              
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                  <Card>
                      <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-bold flex items-center gap-2 text-gray-800 dark:text-gray-100"><Clock className="text-orange-500" size={20}/> Priority To-Do</h3>
+                        <h3 className="font-bold flex items-center gap-2 text-gray-800 dark:text-gray-100"><CheckCircle className="text-green-500" size={20}/> Today's Plan</h3>
                         <div className="relative">
                             <Search size={14} className="absolute left-2 top-1.5 text-gray-400"/>
                             <input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Search..." className="pl-7 py-1 text-sm border rounded bg-gray-50 dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:outline-none"/>
                         </div>
                      </div>
                      <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar">
-                         {priorityAssignments.length === 0 && <div className="text-center text-gray-400 text-sm py-8">No tasks found.</div>}
-                         {priorityAssignments.map(a => {
+                         {visiblePlan.length === 0 && <div className="text-center text-gray-400 text-sm py-8">No tasks for today! Great job.</div>}
+                         {visiblePlan.map(a => {
                                 const cls = classes.find(c => c.id === a.classId);
+                                const isToday = a.dueDate === today;
+                                const isTomorrow = a.dueDate === tomorrowStr;
+                                const rowHighlight = isToday ? 'border-l-4 border-l-red-500 bg-red-50 dark:bg-red-900/10' : 
+                                                     isTomorrow ? 'border-l-4 border-l-blue-500 bg-blue-50 dark:bg-blue-900/10' : 
+                                                     'border-l-4 border-l-transparent';
+                                
                                 return (
-                                    <div key={a.id} onClick={() => onEditAssignment(a)} className="flex justify-between p-3 hover:bg-gray-50 dark:hover:bg-slate-700 rounded border-b border-gray-50 dark:border-slate-700 cursor-pointer transition-colors">
+                                    <div key={a.id} onClick={() => onEditAssignment(a)} className={`flex justify-between p-3 hover:bg-gray-50 dark:hover:bg-slate-700 rounded border-b border-gray-100 dark:border-slate-700 cursor-pointer transition-colors ${rowHighlight}`}>
                                         <div>
                                             <div className="text-sm font-bold text-slate-800 dark:text-slate-200">{a.name}</div>
                                             <div className="text-xs text-gray-500 dark:text-gray-400 flex gap-2 mt-1">
                                                 <span className="font-bold text-blue-600 dark:text-blue-400">{cls?.code}</span>
-                                                <span>{a.dueDate}</span>
+                                                <span className={`${isToday ? 'text-red-600 font-bold': isTomorrow ? 'text-blue-600 font-bold' : ''}`}>
+                                                    {isToday ? 'Due Today' : isTomorrow ? 'Due Tomorrow' : a.dueDate}
+                                                </span>
                                                 <span>• {formatTime(a.estimatedTime || 0)}</span>
                                             </div>
                                         </div>
@@ -362,6 +495,7 @@ const ClassDetailView = ({ classId, classes, assignments, grades, customStatuses
 // 3. Calendar View
 const CalendarView = ({ assignments, events, onAddEvent, onDayClick }) => {
     const [currentDate, setCurrentDate] = useState(new Date());
+    const { today, tomorrowStr } = getWeekRange();
     
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -392,14 +526,20 @@ const CalendarView = ({ assignments, events, onAddEvent, onDayClick }) => {
                         const dayAssignments = assignments.filter(a=>a.dueDate===dateStr);
                         const dayEvents = events.filter(e=>e.date===dateStr);
                         const totalItems = dayAssignments.length + dayEvents.length;
+                        
+                        const isToday = dateStr === today;
+                        const isTomorrow = dateStr === tomorrowStr;
+
+                        const activeAssignments = dayAssignments.filter(a => isActive(a.status));
+                        const activeCount = activeAssignments.length;
 
                         return (
-                            <div key={d} onClick={() => totalItems > 0 && onDayClick({ date: dateStr, items: [...dayAssignments, ...dayEvents] })} className="bg-white dark:bg-slate-800 min-h-[120px] p-2 hover:bg-blue-50 dark:hover:bg-slate-700 relative cursor-pointer group transition-colors">
-                                <div className={`text-sm font-bold mb-1 dark:text-gray-300 ${new Date().toDateString() === new Date(year,month,d).toDateString() ? 'bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center' : ''}`}>{d}</div>
+                            <div key={d} onClick={() => totalItems > 0 && onDayClick({ date: dateStr, items: [...dayAssignments, ...dayEvents] })} className={`bg-white dark:bg-slate-800 min-h-[120px] p-2 hover:bg-blue-50 dark:hover:bg-slate-700 relative cursor-pointer group transition-colors ${isToday ? 'bg-red-50 dark:bg-red-900/10' : isTomorrow ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
+                                <div className={`text-sm font-bold mb-1 dark:text-gray-300 ${isToday ? 'bg-red-600 text-white w-6 h-6 rounded-full flex items-center justify-center' : isTomorrow ? 'bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center' : ''}`}>{d}</div>
                                 
                                 <div className="flex flex-col items-center justify-center h-full mt-2">
                                     {dayAssignments.length > 0 && (
-                                        <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-md ring-2 ring-white dark:ring-slate-600 group-hover:scale-110 transition-transform">
+                                        <div className={`w-8 h-8 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-md ring-2 ring-white dark:ring-slate-600 group-hover:scale-110 transition-transform ${activeCount === 0 ? 'bg-green-500' : isToday ? 'bg-red-500' : isTomorrow ? 'bg-blue-500' : 'bg-slate-500'}`}>
                                             {dayAssignments.length}
                                         </div>
                                     )}
@@ -441,7 +581,6 @@ const ReportView = ({ assignments, customStatuses, classes, gpa }) => {
         const percent = totalItems > 0 ? (count / totalItems) * 100 : 0;
         const sector = { ...status, count, percent, start: lastPercent };
         if (percent > 0) {
-            // Map Tailwind classes to hex approx for chart
             const colorHex = status.color.includes('blue') ? '#3b82f6' : 
                              status.color.includes('green') ? '#10b981' : 
                              status.color.includes('yellow') ? '#f59e0b' : 
@@ -458,7 +597,6 @@ const ReportView = ({ assignments, customStatuses, classes, gpa }) => {
         let csvContent = "data:text/csv;charset=utf-8,";
         csvContent += "Type,Class Name,Class Code,Item Name,Category,Due Date,Status,Score,Total,Percentage,Est Time (mins)\n";
         classes.forEach(c => {
-             // simplified logic just for export header
              csvContent += `Class,${c.name},${c.code},N/A,N/A,N/A,N/A,0,0,0%,0\n`;
         });
         assignments.forEach(a => {
@@ -586,6 +724,9 @@ export default function GradeTracker() {
   
   // Derived State
   const { grades, gpa } = useGrading(data.classes, data.assignments, data.customStatuses);
+  
+  // New Hook for Daily Plan
+  const dailyPlan = useDailyPlan(data.assignments, data.classes);
 
   // UI State
   const [view, setView] = useState('DASHBOARD');
@@ -711,6 +852,7 @@ export default function GradeTracker() {
                 customStatuses={data.customStatuses}
                 grades={grades}
                 gpa={gpa}
+                dailyPlan={dailyPlan}
                 onNavigate={(id) => { setView('CLASS'); setActiveClassId(id); }}
                 onEditAssignment={(a) => { setActiveAssignment(a); toggleModal('edit', true); }}
              />
@@ -911,6 +1053,15 @@ export default function GradeTracker() {
                       <h3 className="font-bold text-lg dark:text-white">Due on {selectedDayItems.date}</h3>
                       <button onClick={()=>setSelectedDayItems(null)} className="dark:text-gray-400"><X/></button>
                   </div>
+                  
+                  {/* Total Time Calculation for Calendar Popup */}
+                  <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg flex justify-between items-center">
+                      <span className="text-sm font-bold text-blue-700 dark:text-blue-300">Total Estimated Time:</span>
+                      <span className="text-lg font-black text-blue-800 dark:text-blue-200">
+                          {formatTime(selectedDayItems.items.reduce((acc, i) => acc + (parseInt(i.estimatedTime)||0), 0))}
+                      </span>
+                  </div>
+
                   <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2 no-scrollbar">
                       {selectedDayItems.items.map((item, idx) => (
                           <div key={idx} onClick={() => { 
