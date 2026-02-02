@@ -45,7 +45,8 @@ const Badge = ({ status }) => {
     'TODO': 'bg-gray-100 text-gray-600 border-gray-200',
     'IN_PROGRESS': 'bg-blue-100 text-blue-700 border-blue-200',
     'TURNED_IN': 'bg-yellow-100 text-yellow-800 border-yellow-200',
-    'GRADED': 'bg-green-100 text-green-700 border-green-200'
+    'GRADED': 'bg-green-100 text-green-700 border-green-200',
+    'LATE': 'bg-red-100 text-red-700 border-red-200'
   };
   return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[status] || styles['TODO']}`}>{status.replace('_', ' ')}</span>;
 };
