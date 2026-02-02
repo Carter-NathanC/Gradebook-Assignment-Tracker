@@ -1,26 +1,23 @@
-import React, { useState, useEffect, useMemo, useContext, createContext } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BookOpen, Clock, GraduationCap, LayoutDashboard, 
   LogOut, Plus, Settings, Calendar as CalendarIcon, 
   ChevronRight, ChevronLeft, Trash2, X, Download, Wrench, 
-  Printer, FileText, Lock, Save, AlertTriangle, 
+  Printer, FileText, Lock, AlertTriangle, 
   Palette, TrendingUp, Target, Timer, Moon, Sun, Search,
   Database
 } from 'lucide-react';
 
-/* GRADE TRACKER FRONTEND 2.0
-  --------------------------
-  Improvements:
-  - Architecture: Separated concerns via Hooks and Component separation
-  - Security: HttpOnly Cookies (via API), no LocalStorage for secrets
-  - Performance: useMemo for calculations
-  - Features: Dark Mode, Search
+/* GRADE TRACKER FRONTEND - Enhanced 
+  ---------------------------------
+  - Architecture: Custom Hooks for API & Grading
+  - Security: HttpOnly Cookies, Input Validation
+  - Features: Dark Mode, Search, Calendar, Reports
 */
 
 // --- CONSTANTS & DEFAULTS ---
 
 const DEFAULT_THEME = {
-  colors: { primary: "#1e3a8a", secondary: "#3b82f6" },
   universityName: "My University"
 };
 
@@ -143,11 +140,9 @@ const useGrading = (classes, assignments, customStatuses) => {
             let classAssignments = assignments.filter(a => {
                 if (a.classId !== cls.id) return false;
                 const statusConfig = customStatuses.find(s => s.id === a.status);
-                // Count if marked as countInGrade OR if due date has passed
                 return statusConfig?.countsInGrade || (a.dueDate && a.dueDate < now);
             });
 
-            // Rule Processing (e.g., Drop Lowest)
             if (cls.rules) {
                 cls.rules.forEach(rule => {
                     if (rule.type === 'DROP_LOWEST') {
@@ -364,7 +359,227 @@ const ClassDetailView = ({ classId, classes, assignments, grades, customStatuses
     );
 };
 
-// 3. Main App Container
+// 3. Calendar View
+const CalendarView = ({ assignments, events, onAddEvent, onDayClick }) => {
+    const [currentDate, setCurrentDate] = useState(new Date());
+    
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+    return (
+        <div className="space-y-6 animate-fade-in">
+            <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold text-slate-800 dark:text-gray-100 flex items-center gap-2"><CalendarIcon className="text-blue-600 dark:text-blue-400"/> Calendar</h2>
+                <button onClick={onAddEvent} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow flex items-center gap-2 hover:bg-blue-700 transition-colors"><Plus size={16}/> Add Event</button>
+            </div>
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
+                <div className="p-4 flex justify-between items-center bg-gray-50 dark:bg-slate-700 border-b dark:border-slate-600">
+                    <button onClick={()=>setCurrentDate(new Date(year, month-1, 1))} className="p-2 hover:bg-white dark:hover:bg-slate-600 rounded-full dark:text-white"><ChevronLeft/></button>
+                    <h3 className="text-lg font-bold dark:text-white">{monthNames[month]} {year}</h3>
+                    <button onClick={()=>setCurrentDate(new Date(year, month+1, 1))} className="p-2 hover:bg-white dark:hover:bg-slate-600 rounded-full dark:text-white"><ChevronRight/></button>
+                </div>
+                <div className="grid grid-cols-7 text-center bg-gray-100 dark:bg-slate-900 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase py-2">
+                    {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><div key={d}>{d}</div>)}
+                </div>
+                <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 dark:bg-slate-700 gap-px border dark:border-slate-700">
+                    {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white dark:bg-slate-800 min-h-[120px]"></div>)}
+                    {Array.from({length: daysInMonth}).map((_,i)=>{
+                        const d = i+1;
+                        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                        const dayAssignments = assignments.filter(a=>a.dueDate===dateStr);
+                        const dayEvents = events.filter(e=>e.date===dateStr);
+                        const totalItems = dayAssignments.length + dayEvents.length;
+
+                        return (
+                            <div key={d} onClick={() => totalItems > 0 && onDayClick({ date: dateStr, items: [...dayAssignments, ...dayEvents] })} className="bg-white dark:bg-slate-800 min-h-[120px] p-2 hover:bg-blue-50 dark:hover:bg-slate-700 relative cursor-pointer group transition-colors">
+                                <div className={`text-sm font-bold mb-1 dark:text-gray-300 ${new Date().toDateString() === new Date(year,month,d).toDateString() ? 'bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center' : ''}`}>{d}</div>
+                                
+                                <div className="flex flex-col items-center justify-center h-full mt-2">
+                                    {dayAssignments.length > 0 && (
+                                        <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-md ring-2 ring-white dark:ring-slate-600 group-hover:scale-110 transition-transform">
+                                            {dayAssignments.length}
+                                        </div>
+                                    )}
+                                    {dayEvents.length > 0 && (
+                                        <div className="mt-1 w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                                    )}
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// 4. Report View
+const ReportView = ({ assignments, customStatuses, classes, gpa }) => {
+    const relevantAssignments = assignments.filter(a => {
+        const today = new Date().toISOString().split('T')[0];
+        return a.dueDate <= today;
+    });
+    
+    const totalPossible = relevantAssignments.reduce((acc, a) => acc + (parseFloat(a.total) || 0), 0);
+    const totalEarned = relevantAssignments.reduce((acc, a) => acc + (parseFloat(a.grade) || 0), 0);
+    const avgScore = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
+    
+    const statusCounts = relevantAssignments.reduce((acc, curr) => {
+        acc[curr.status] = (acc[curr.status] || 0) + 1;
+        return acc;
+    }, {});
+
+    const totalItems = relevantAssignments.length;
+    
+    let conicSectors = "";
+    let lastPercent = 0;
+    const sectors = customStatuses.map(status => {
+        const count = statusCounts[status.id] || 0;
+        const percent = totalItems > 0 ? (count / totalItems) * 100 : 0;
+        const sector = { ...status, count, percent, start: lastPercent };
+        if (percent > 0) {
+            // Map Tailwind classes to hex approx for chart
+            const colorHex = status.color.includes('blue') ? '#3b82f6' : 
+                             status.color.includes('green') ? '#10b981' : 
+                             status.color.includes('yellow') ? '#f59e0b' : 
+                             status.color.includes('red') ? '#ef4444' : 
+                             status.color.includes('purple') ? '#8b5cf6' : 
+                             status.color.includes('orange') ? '#f97316' : '#94a3b8';
+            conicSectors += `${colorHex} ${lastPercent}% ${lastPercent + percent}%, `;
+            lastPercent += percent;
+        }
+        return sector;
+    });
+
+    const downloadCSV = () => {
+        let csvContent = "data:text/csv;charset=utf-8,";
+        csvContent += "Type,Class Name,Class Code,Item Name,Category,Due Date,Status,Score,Total,Percentage,Est Time (mins)\n";
+        classes.forEach(c => {
+             // simplified logic just for export header
+             csvContent += `Class,${c.name},${c.code},N/A,N/A,N/A,N/A,0,0,0%,0\n`;
+        });
+        assignments.forEach(a => {
+             const parentClass = classes.find(c => c.id === a.classId);
+             const percentage = a.total > 0 ? ((a.grade / a.total) * 100).toFixed(2) + "%" : "0%";
+             const safeName = `"${a.name.replace(/"/g, '""')}"`;
+             const statusLabel = customStatuses.find(s => s.id === a.status)?.label || a.status;
+             csvContent += `Assignment,${parentClass?.name || "Unknown"},${parentClass?.code || ""},${safeName},${a.category},${a.dueDate},${statusLabel},${a.grade},${a.total},${percentage},${a.estimatedTime || 0}\n`;
+        });
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `grade_tracker_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    return (
+        <div className="space-y-8 animate-fade-in print:p-4">
+            <div className="flex justify-between items-end print:hidden">
+                <div>
+                    <h2 className="text-3xl font-bold text-slate-800 dark:text-white">Academic Report</h2>
+                    <p className="text-slate-500 dark:text-gray-400">Summary of all performance metrics</p>
+                </div>
+                <div className="flex gap-2">
+                    <button onClick={downloadCSV} className="flex items-center gap-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"><Download size={18}/> Export CSV</button>
+                    <button onClick={() => window.print()} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-none transition-all"><Printer size={18}/> Print</button>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <Card className="flex flex-col items-center justify-center border-b-4 border-b-blue-600">
+                    <div className="p-3 bg-blue-50 dark:bg-blue-900 rounded-full text-blue-600 dark:text-blue-300 mb-2"><GraduationCap size={24}/></div>
+                    <div className="text-2xl font-black text-slate-800 dark:text-white">{gpa}</div>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cumulative GPA</div>
+                </Card>
+                <Card className="flex flex-col items-center justify-center border-b-4 border-b-green-600">
+                    <div className="p-3 bg-green-50 dark:bg-green-900 rounded-full text-green-600 dark:text-green-300 mb-2"><TrendingUp size={24}/></div>
+                    <div className="text-2xl font-black text-slate-800 dark:text-white">{avgScore.toFixed(1)}%</div>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Average Score</div>
+                </Card>
+                <Card className="flex flex-col items-center justify-center border-b-4 border-b-purple-600">
+                    <div className="p-3 bg-purple-50 dark:bg-purple-900 rounded-full text-purple-600 dark:text-purple-300 mb-2"><Target size={24}/></div>
+                    <div className="text-2xl font-black text-slate-800 dark:text-white">{totalItems}</div>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Items Due</div>
+                </Card>
+                <Card className="flex flex-col items-center justify-center border-b-4 border-b-orange-600">
+                    <div className="p-3 bg-orange-50 dark:bg-orange-900 rounded-full text-orange-600 dark:text-orange-300 mb-2"><Timer size={24}/></div>
+                    <div className="text-2xl font-black text-slate-800 dark:text-white">
+                        {formatTime(relevantAssignments.reduce((acc,a)=>acc+(parseInt(a.estimatedTime)||0),0))}
+                    </div>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Time Spent</div>
+                </Card>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <Card className="lg:col-span-1 flex flex-col items-center">
+                    <h4 className="font-bold text-slate-700 dark:text-white mb-6 w-full flex items-center gap-2"><Palette size={18} className="text-slate-400"/> Status Distribution</h4>
+                    <div className="relative w-48 h-48 rounded-full shadow-inner mb-6" style={{ background: totalItems > 0 ? `conic-gradient(${conicSectors.slice(0, -2)})` : '#f1f5f9' }}>
+                        <div className="absolute inset-8 bg-white dark:bg-slate-800 rounded-full flex flex-col items-center justify-center shadow-sm">
+                             <span className="text-3xl font-black text-slate-800 dark:text-white">{totalItems}</span>
+                             <span className="text-[10px] font-bold text-slate-400 uppercase">Tasks</span>
+                        </div>
+                    </div>
+                    <div className="w-full space-y-2">
+                        {sectors.filter(s => s.count > 0).map(s => (
+                            <div key={s.id} className="flex justify-between items-center text-xs">
+                                <div className="flex items-center gap-2">
+                                    <div className={`w-3 h-3 rounded-full ${s.color.split(' ')[0]}`}></div>
+                                    <span className="font-medium text-slate-600 dark:text-slate-300">{s.label}</span>
+                                </div>
+                                <span className="font-bold text-slate-800 dark:text-white">{s.count} ({s.percent.toFixed(0)}%)</span>
+                            </div>
+                        ))}
+                    </div>
+                </Card>
+
+                <Card className="lg:col-span-2">
+                     <h4 className="font-bold text-slate-700 dark:text-white mb-6 flex items-center gap-2"><Clock size={18} className="text-slate-400"/> Chronological History</h4>
+                     <div className="overflow-x-auto no-scrollbar">
+                         <table className="w-full text-left">
+                             <thead>
+                                 <tr className="border-b border-slate-100 dark:border-slate-700">
+                                     <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Date</th>
+                                     <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Class</th>
+                                     <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Item Name</th>
+                                     <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status</th>
+                                     <th className="py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Grade</th>
+                                 </tr>
+                             </thead>
+                             <tbody className="divide-y divide-slate-50 dark:divide-slate-700">
+                                 {relevantAssignments
+                                   .sort((a,b) => b.dueDate.localeCompare(a.dueDate))
+                                   .map(a => {
+                                     const cls = classes.find(c => c.id === a.classId);
+                                     const scorePercent = a.total > 0 ? (a.grade / a.total) * 100 : 0;
+                                     let gradeColor = "text-slate-400";
+                                     if (a.status === 'GRADED') {
+                                         gradeColor = scorePercent >= 90 ? "text-green-600 dark:text-green-400" : scorePercent >= 80 ? "text-blue-600 dark:text-blue-400" : scorePercent >= 70 ? "text-orange-600 dark:text-orange-400" : "text-red-600 dark:text-red-400";
+                                     }
+                                     return (
+                                         <tr key={a.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors group">
+                                             <td className="py-4 text-xs text-slate-500 font-mono">{a.dueDate}</td>
+                                             <td className="py-4 text-xs font-bold text-slate-700 dark:text-slate-300">{cls?.code || 'N/A'}</td>
+                                             <td className="py-4 text-sm font-medium text-slate-800 dark:text-slate-200">{a.name}</td>
+                                             <td className="py-4"><Badge status={a.status} customStatuses={customStatuses}/></td>
+                                             <td className={`py-4 text-right text-sm font-black ${gradeColor}`}>{a.status === 'GRADED' ? `${scorePercent.toFixed(0)}%` : '--'}</td>
+                                         </tr>
+                                     )
+                                 })}
+                             </tbody>
+                         </table>
+                     </div>
+                </Card>
+            </div>
+        </div>
+    );
+};
+
+// 5. Main App Container
 export default function GradeTracker() {
   const { isAuthenticated, loading, data, saveData, login, logout, apiCall } = useApi();
   const { isDark, toggle: toggleTheme } = useTheme();
@@ -377,13 +592,15 @@ export default function GradeTracker() {
   const [activeClassId, setActiveClassId] = useState(null);
   const [authKeyInput, setAuthKeyInput] = useState("");
   const [activeAssignment, setActiveAssignment] = useState(null);
+  const [selectedDayItems, setSelectedDayItems] = useState(null); // Calendar Drill down
   
   // Modals
   const [modals, setModals] = useState({
       edit: false,
       addClass: false,
       globalSettings: false,
-      classSettings: false
+      classSettings: false,
+      addEvent: false
   });
 
   const toggleModal = (name, val) => setModals(prev => ({ ...prev, [name]: val }));
@@ -400,6 +617,18 @@ export default function GradeTracker() {
        };
        saveData({ classes: [...data.classes, newClass] });
        toggleModal('addClass', false);
+  };
+
+  const handleAddEvent = (formData) => {
+      const newEvent = { 
+          id: crypto.randomUUID(), 
+          title: formData.get('title'), 
+          date: formData.get('date'), 
+          type: formData.get('type'), 
+          description: formData.get('description') 
+      };
+      saveData({ events: [...data.events, newEvent] });
+      toggleModal('addEvent', false);
   };
 
   const handleDeleteClass = async (id) => {
@@ -449,6 +678,8 @@ export default function GradeTracker() {
         </div>
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto no-scrollbar">
             <button onClick={() => setView('DASHBOARD')} className={`w-full flex items-center gap-3 p-2 rounded text-sm transition-colors ${view==='DASHBOARD'?'bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300':'hover:bg-gray-50 dark:hover:bg-slate-700'}`}><LayoutDashboard size={18}/> Dashboard</button>
+            <button onClick={() => setView('CALENDAR')} className={`w-full flex items-center gap-3 p-2 rounded text-sm transition-colors ${view==='CALENDAR'?'bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300':'hover:bg-gray-50 dark:hover:bg-slate-700'}`}><CalendarIcon size={18}/> Calendar</button>
+            <button onClick={() => setView('REPORT')} className={`w-full flex items-center gap-3 p-2 rounded text-sm transition-colors ${view==='REPORT'?'bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300':'hover:bg-gray-50 dark:hover:bg-slate-700'}`}><FileText size={18}/> Reports</button>
             <div className="pt-4 text-xs font-bold text-gray-400 uppercase px-2">Classes</div>
             {data.classes.map((c) => {
                 const s = grades[c.id];
@@ -484,6 +715,24 @@ export default function GradeTracker() {
                 onEditAssignment={(a) => { setActiveAssignment(a); toggleModal('edit', true); }}
              />
          )}
+
+         {view === 'CALENDAR' && (
+             <CalendarView
+                assignments={data.assignments}
+                events={data.events}
+                onAddEvent={() => toggleModal('addEvent', true)}
+                onDayClick={(dayData) => setSelectedDayItems(dayData)}
+             />
+         )}
+
+         {view === 'REPORT' && (
+             <ReportView
+                assignments={data.assignments}
+                customStatuses={data.customStatuses}
+                classes={data.classes}
+                gpa={gpa}
+             />
+         )}
          
          {view === 'CLASS' && activeClassId && (
             <ClassDetailView 
@@ -517,7 +766,7 @@ export default function GradeTracker() {
       </main>
 
       {/* --- MODALS --- */}
-      {/* 1. Global Settings Modal */}
+      {/* 1. Global Settings */}
       {modals.globalSettings && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
               <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-xl max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl border dark:border-slate-700">
@@ -530,14 +779,12 @@ export default function GradeTracker() {
                           <label className="text-sm font-bold block mb-2 text-gray-700 dark:text-gray-300">University Name</label>
                           <input value={data.universityName} onChange={e=>saveData({universityName: e.target.value})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white"/>
                       </div>
-                      
                       <div className="border-t dark:border-slate-700 pt-4">
                           <h4 className="font-bold mb-4 text-gray-800 dark:text-white">Data Management</h4>
                           <button onClick={handleBackup} className="flex items-center gap-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2 rounded-lg font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors w-full justify-center">
                               <Database size={18}/> Download Full Backup
                           </button>
                       </div>
-
                       <div className="border-t dark:border-slate-700 pt-4">
                           <label className="text-sm block mb-2 font-bold text-gray-700 dark:text-gray-300">Change Password</label>
                           <input type="password" id="newPass" placeholder="New Access Key" className="border dark:border-slate-600 p-2 w-full rounded mb-2 dark:bg-slate-700 dark:text-white"/>
@@ -573,7 +820,30 @@ export default function GradeTracker() {
           </div>
       )}
 
-      {/* 3. Edit Assignment Modal */}
+      {/* 3. Add Event Modal */}
+      {modals.addEvent && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+             <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md shadow-xl border dark:border-slate-700">
+                 <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Add Calendar Event</h3>
+                 <form onSubmit={(e) => { e.preventDefault(); handleAddEvent(new FormData(e.target)); }}>
+                     <input name="title" placeholder="Event Title" className="border dark:border-slate-600 p-2 w-full rounded mb-2 dark:bg-slate-700 dark:text-white" required />
+                     <input name="date" type="date" className="border dark:border-slate-600 p-2 w-full rounded mb-2 dark:bg-slate-700 dark:text-white" required />
+                     <select name="type" className="border dark:border-slate-600 p-2 w-full rounded mb-2 dark:bg-slate-700 dark:text-white">
+                        <option value="exam">Exam</option>
+                        <option value="study">Study Session</option>
+                        <option value="other">Other</option>
+                     </select>
+                     <textarea name="description" placeholder="Description" className="border dark:border-slate-600 p-2 w-full rounded mb-2 dark:bg-slate-700 dark:text-white h-24"/>
+                     <div className="flex gap-2 mt-4">
+                         <button type="button" onClick={()=>toggleModal('addEvent', false)} className="flex-1 p-2 rounded text-gray-600 dark:text-gray-400">Cancel</button>
+                         <button className="flex-1 bg-blue-600 text-white p-2 rounded font-bold hover:bg-blue-700">Save Event</button>
+                     </div>
+                 </form>
+             </div>
+          </div>
+      )}
+
+      {/* 4. Edit Assignment Modal */}
       {modals.edit && activeAssignment && (
            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-lg shadow-xl border dark:border-slate-700">
@@ -633,7 +903,36 @@ export default function GradeTracker() {
            </div>
       )}
 
-      {/* 4. Class Settings Modal - simplified for brevity in this refactor */}
+      {/* 5. Calendar Item Modal */}
+      {selectedDayItems && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-800 w-full max-w-md rounded-xl shadow-2xl p-6 border dark:border-slate-700">
+                  <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-bold text-lg dark:text-white">Due on {selectedDayItems.date}</h3>
+                      <button onClick={()=>setSelectedDayItems(null)} className="dark:text-gray-400"><X/></button>
+                  </div>
+                  <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2 no-scrollbar">
+                      {selectedDayItems.items.map((item, idx) => (
+                          <div key={idx} onClick={() => { 
+                              if (item.grade !== undefined) { 
+                                  setActiveAssignment(item); 
+                                  toggleModal('edit', true); 
+                                  setSelectedDayItems(null);
+                              } 
+                          }} className={`p-3 rounded-lg border-l-4 shadow-sm hover:translate-x-1 transition-transform cursor-pointer ${item.grade !== undefined ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'}`}>
+                              <div className="font-bold text-slate-800 dark:text-slate-200">{item.name || item.title}</div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 flex justify-between mt-1">
+                                  <span>{item.category || item.type}</span>
+                                  {item.estimatedTime && <span><Timer size={10} className="inline mr-1"/>{formatTime(item.estimatedTime)}</span>}
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* 6. Class Settings Modal */}
       {modals.classSettings && activeClassId && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-lg border dark:border-slate-700">
