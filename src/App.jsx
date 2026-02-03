@@ -10,10 +10,10 @@ import {
 
 /* GRADE TRACKER FRONTEND
   ---------------------------------
-  - Architecture: Custom Hooks for API & Grading
-  - Feature: "Today's Plan" Logic (Smart Daily To-Do)
+  - Feature: "Today's Plan" (Daily Capacity Logic)
   - Feature: 7-Day Workload Scope
   - Feature: Visual Due Date cues (Red/Blue)
+  - Feature: Fixed Data Persistence for Estimated Time
 */
 
 // --- CONSTANTS & DEFAULTS ---
@@ -75,15 +75,19 @@ const isActive = (status) => {
 // Calculate Date Range for "Next 7 Days"
 const getWeekRange = () => {
     const now = new Date();
-    const today = now.toLocaleDateString('en-CA');
+    // Use local time for date strings to avoid timezone shift issues on "Today"
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const today = `${year}-${month}-${day}`;
     
     const nextWeek = new Date(now);
     nextWeek.setDate(now.getDate() + 7);
-    const nextWeekStr = nextWeek.toLocaleDateString('en-CA');
+    const nextWeekStr = nextWeek.toISOString().split('T')[0];
 
     const tomorrow = new Date(now);
     tomorrow.setDate(now.getDate() + 1);
-    const tomorrowStr = tomorrow.toLocaleDateString('en-CA');
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
     return { today, tomorrowStr, nextWeekStr };
 };
@@ -244,7 +248,7 @@ const useDailyPlan = (assignments, classes) => {
 
         const generatePlan = () => {
             const { today, tomorrowStr, nextWeekStr } = getWeekRange();
-            const stored = localStorage.getItem('gt_daily_plan_v2');
+            const stored = localStorage.getItem('gt_daily_plan_v3');
             let storedData = stored ? JSON.parse(stored) : null;
 
             // Helper: Calculate Impact (Weight * Points)
@@ -262,13 +266,14 @@ const useDailyPlan = (assignments, classes) => {
             // 1. Identify all active work due in Next 7 Days
             const activeAssignments = assignments.filter(a => {
                 if (!isActive(a.status)) return false;
+                // Inclusive range: Today <= Due <= Today+7
                 return a.dueDate >= today && a.dueDate <= nextWeekStr;
             });
 
             // 2. Check for existing valid plan for TODAY
             if (storedData && storedData.date === today) {
-                // Return only active items from the stored snapshot
-                // (If user turned it in, it drops off the list, but NO new items appear)
+                // Return only active items from the stored snapshot IDs
+                // This ensures completed items disappear, but NO new items appear.
                 const currentPlanIds = storedData.ids;
                 const items = assignments.filter(a => currentPlanIds.includes(a.id) && isActive(a.status));
                 
@@ -285,29 +290,30 @@ const useDailyPlan = (assignments, classes) => {
             const totalWeekLoad = activeAssignments.length;
             const dailyQuota = Math.ceil(totalWeekLoad / 7) || 0;
 
-            // Separate Urgent (Today/Tomorrow) from Others
-            const urgentItems = activeAssignments.filter(a => a.dueDate <= tomorrowStr);
-            const otherItems = activeAssignments.filter(a => a.dueDate > tomorrowStr);
+            // Priority 1: Due Tomorrow (User Request: "always finish what is due tomorrow first")
+            // Priority 2: Due Today or Overdue (Implicit logic: don't miss today's deadlines either)
+            // Priority 3: High Impact from backlog
 
-            // Sort Others by Date then Impact
-            otherItems.sort((a,b) => {
-                if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-                return getImpact(b) - getImpact(a);
-            });
+            const mandatoryItems = activeAssignments.filter(a => a.dueDate <= tomorrowStr);
+            const backlogItems = activeAssignments.filter(a => a.dueDate > tomorrowStr);
 
-            // Fill the slots
-            // Always include everything due Today/Tomorrow
-            let selectedIds = urgentItems.map(a => a.id);
+            // Sort Backlog by Impact
+            backlogItems.sort((a,b) => getImpact(b) - getImpact(a));
+
+            // Determine IDs for the snapshot
+            let selectedIds = mandatoryItems.map(a => a.id);
             
-            // If we have room left in quota, add high priority items from later in the week
+            // If quota allows, pull from backlog
+            // We ignore quota if mandatory > quota (must show all due tomorrow/today)
             let slotsRemaining = dailyQuota - selectedIds.length;
+            
             if (slotsRemaining > 0) {
-                const extras = otherItems.slice(0, slotsRemaining);
+                const extras = backlogItems.slice(0, slotsRemaining);
                 selectedIds = [...selectedIds, ...extras.map(a => a.id)];
             }
 
             // Save Snapshot
-            localStorage.setItem('gt_daily_plan_v2', JSON.stringify({
+            localStorage.setItem('gt_daily_plan_v3', JSON.stringify({
                 date: today,
                 ids: selectedIds
             }));
@@ -322,7 +328,7 @@ const useDailyPlan = (assignments, classes) => {
         };
 
         generatePlan();
-    }, [assignments, classes]); // Re-run if assignments change (e.g. status update) to filter completed items
+    }, [assignments, classes]); 
 
     return plan;
 };
@@ -354,7 +360,7 @@ const Badge = ({ status, customStatuses }) => {
 // 1. Dashboard View
 const DashboardView = ({ classes, assignments, customStatuses, grades, gpa, dailyPlan, onNavigate, onEditAssignment }) => {
     const [searchTerm, setSearchTerm] = useState("");
-    const { today, tomorrowStr, nextWeekStr } = getWeekRange();
+    const { today, nextWeekStr } = getWeekRange();
 
     // Stats Logic (Scoped to Next 7 Days)
     const next7DaysAssignments = assignments.filter(a => {
@@ -402,7 +408,11 @@ const DashboardView = ({ classes, assignments, customStatuses, grades, gpa, dail
                          {visiblePlan.map(a => {
                                 const cls = classes.find(c => c.id === a.classId);
                                 const isToday = a.dueDate === today;
-                                const isTomorrow = a.dueDate === tomorrowStr;
+                                // We check if it is explicitly tomorrow
+                                const tomorrowDate = new Date();
+                                tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+                                const isTomorrow = a.dueDate === tomorrowDate.toISOString().split('T')[0];
+
                                 const rowHighlight = isToday ? 'border-l-4 border-l-red-500 bg-red-50 dark:bg-red-900/10' : 
                                                      isTomorrow ? 'border-l-4 border-l-blue-500 bg-blue-50 dark:bg-blue-900/10' : 
                                                      'border-l-4 border-l-transparent';
@@ -522,7 +532,12 @@ const CalendarView = ({ assignments, events, onAddEvent, onDayClick }) => {
                     {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white dark:bg-slate-800 min-h-[120px]"></div>)}
                     {Array.from({length: daysInMonth}).map((_,i)=>{
                         const d = i+1;
-                        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                        // Use local time construction
+                        const cellDate = new Date(year, month, d);
+                        const monthStr = String(month + 1).padStart(2, '0');
+                        const dayStr = String(d).padStart(2, '0');
+                        const dateStr = `${year}-${monthStr}-${dayStr}`;
+
                         const dayAssignments = assignments.filter(a=>a.dueDate===dateStr);
                         const dayEvents = events.filter(e=>e.date===dateStr);
                         const totalItems = dayAssignments.length + dayEvents.length;
@@ -1025,7 +1040,7 @@ export default function GradeTracker() {
                            </div>
                            <div>
                                <label className="text-xs text-gray-500 dark:text-gray-400">Est Time (mins)</label>
-                               <input type="number" value={activeAssignment.estimatedTime} onChange={e => setActiveAssignment({...activeAssignment, estimatedTime: e.target.value})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white"/>
+                               <input type="number" min="0" value={activeAssignment.estimatedTime || 0} onChange={e => setActiveAssignment({...activeAssignment, estimatedTime: parseInt(e.target.value) || 0})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white"/>
                            </div>
                        </div>
                        <div className="flex justify-between pt-4 border-t dark:border-slate-700 mt-4">
