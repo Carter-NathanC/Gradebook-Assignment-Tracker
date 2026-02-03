@@ -1,12 +1,9 @@
 /*
-  GradeTracker Local Server (Enhanced)
+  GradeTracker Local Server (Fixed)
   ------------------------------------
-  Features:
-  - Rate Limiting (Security)
-  - HttpOnly Cookies (Security)
-  - Atomic File Writes (Data Integrity)
-  - Backup Endpoint
-  - Robust Payload Handling
+  - Rate Limiting: Relaxed to 2000 req/15min to prevent blocking saves
+  - Body Limit: 50mb
+  - Atomic Writes: Prevents data corruption
 */
 
 import express from 'express';
@@ -27,30 +24,26 @@ const DIST_DIR = path.join(__dirname, 'dist');
 
 const app = express();
 
-// Security: Rate Limiting
+// Security: Rate Limiting (Relaxed for single-user intensive use)
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per windowMs
-    message: { error: "Too many requests, please try again later." }
+    max: 2000, // Increased to 2000 to prevent blocking legitimate edits
+    message: { error: "Too many requests, please slow down." }
 });
 
 // Middleware
 app.use(limiter);
-app.use(cors());
-// Increased limit to prevent data loss on large saves
+app.use(cors({ origin: true, credentials: true })); // Allow credentials
 app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 app.use(express.static(DIST_DIR));
 
-// Helper: Atomic Write to prevent data corruption
+// Helper: Atomic Write
 const atomicWrite = (filePath, data) => {
     const tempFile = `${filePath}.tmp`;
     try {
-        // Ensure directory exists
         const dir = path.dirname(filePath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         
         fs.writeFileSync(tempFile, JSON.stringify(data, null, 2));
         fs.renameSync(tempFile, filePath);
@@ -61,36 +54,22 @@ const atomicWrite = (filePath, data) => {
     }
 };
 
-// Helper: SHA-256 Hash
+// Helper: Hash
 const hashKey = (key) => crypto.createHash('sha256').update(key).digest('hex');
 
-// Middleware: Authenticate Request via Cookie
+// Middleware: Authenticate
 const authenticate = (req, res, next) => {
-    // Check for cookie first
     const token = req.cookies.auth_token;
-
-    if (!token) {
-        return res.status(401).json({ error: "Unauthorized" });
-    }
+    if (!token) return res.status(401).json({ error: "Unauthorized: No token" });
 
     try {
-        if (!fs.existsSync(AUTH_FILE)) {
-            return res.status(500).json({ error: "Server not initialized." });
-        }
-        
+        if (!fs.existsSync(AUTH_FILE)) return res.status(500).json({ error: "Server not initialized." });
         const authData = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
-
-        // Compare cookie hash with stored hash (Constant time)
-        const valid = crypto.timingSafeEqual(
-            Buffer.from(token), 
-            Buffer.from(authData.passwordHash)
-        );
-
-        if (valid) {
-            next();
-        } else {
-            res.status(403).json({ error: "Invalid Token" });
-        }
+        
+        // Constant time comparison
+        const valid = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(authData.passwordHash));
+        if (valid) next();
+        else res.status(403).json({ error: "Invalid Token" });
     } catch (e) {
         console.error("Auth Error:", e);
         res.status(500).json({ error: "Authentication failed" });
@@ -99,7 +78,6 @@ const authenticate = (req, res, next) => {
 
 // --- API Routes ---
 
-// 1. Login (Sets HttpOnly Cookie)
 app.post('/api/login', (req, res) => {
     const { accessKey } = req.body;
     if (!accessKey) return res.status(400).json({ error: "Missing key" });
@@ -107,19 +85,14 @@ app.post('/api/login', (req, res) => {
     try {
         const authData = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
         const submittedHash = hashKey(accessKey);
-
-        const valid = crypto.timingSafeEqual(
-            Buffer.from(submittedHash),
-            Buffer.from(authData.passwordHash)
-        );
+        const valid = crypto.timingSafeEqual(Buffer.from(submittedHash), Buffer.from(authData.passwordHash));
 
         if (valid) {
-            // Set HttpOnly cookie
             res.cookie('auth_token', submittedHash, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'strict',
-                maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+                secure: false, // Allow http for local Docker
+                sameSite: 'lax',
+                maxAge: 30 * 24 * 60 * 60 * 1000
             });
             res.json({ success: true });
         } else {
@@ -130,18 +103,14 @@ app.post('/api/login', (req, res) => {
     }
 });
 
-// 2. Logout (Clears Cookie)
 app.post('/api/logout', (req, res) => {
     res.clearCookie('auth_token');
     res.json({ success: true });
 });
 
-// 3. Get Data
 app.get('/api/data', authenticate, (req, res) => {
     try {
-        if (!fs.existsSync(DB_FILE)) {
-            return res.json({ years: [], classes: [], assignments: [] });
-        }
+        if (!fs.existsSync(DB_FILE)) return res.json({ years: [], classes: [], assignments: [], events: [] });
         const data = fs.readFileSync(DB_FILE, 'utf8');
         res.json(JSON.parse(data));
     } catch (e) {
@@ -149,14 +118,9 @@ app.get('/api/data', authenticate, (req, res) => {
     }
 });
 
-// 4. Save Data (Atomic)
 app.post('/api/data', authenticate, (req, res) => {
     try {
-        // Basic Validation
-        if (!req.body || typeof req.body !== 'object') {
-            return res.status(400).json({ error: "Invalid data format" });
-        }
-
+        if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: "Invalid data format" });
         const success = atomicWrite(DB_FILE, req.body);
         if (success) res.json({ success: true });
         else res.status(500).json({ error: "Write failed" });
@@ -165,24 +129,14 @@ app.post('/api/data', authenticate, (req, res) => {
     }
 });
 
-// 5. Change Password
 app.post('/api/change-password', authenticate, (req, res) => {
     try {
         const { newPassword } = req.body;
-        if (!newPassword || newPassword.length < 8) {
-            return res.status(400).json({ error: "Password too short" });
-        }
-
+        if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: "Password too short" });
         const newHash = hashKey(newPassword);
         const success = atomicWrite(AUTH_FILE, { passwordHash: newHash });
-        
         if (success) {
-            res.cookie('auth_token', newHash, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'strict',
-                maxAge: 30 * 24 * 60 * 60 * 1000
-            });
+            res.cookie('auth_token', newHash, { httpOnly: true, secure: false, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
             res.json({ success: true });
         } else {
             res.status(500).json({ error: "Failed to update password file" });
@@ -192,20 +146,11 @@ app.post('/api/change-password', authenticate, (req, res) => {
     }
 });
 
-// 6. Backup Data
 app.get('/api/backup', authenticate, (req, res) => {
-    try {
-        if (fs.existsSync(DB_FILE)) {
-            res.download(DB_FILE, `gradetracker-backup-${Date.now()}.json`);
-        } else {
-            res.status(404).json({ error: "No data to backup" });
-        }
-    } catch (e) {
-        res.status(500).json({ error: "Backup failed" });
-    }
+    if (fs.existsSync(DB_FILE)) res.download(DB_FILE, `gradetracker-backup-${Date.now()}.json`);
+    else res.status(404).json({ error: "No data to backup" });
 });
 
-// Catch-all: Serve React App
 app.get('*', (req, res) => {
     res.sendFile(path.join(DIST_DIR, 'index.html'));
 });
