@@ -6,7 +6,7 @@ WORKDIR /app
 # Copy dependency definitions
 COPY package*.json ./
 
-# Install all dependencies (including devDependencies for building)
+# Install all dependencies
 RUN npm install
 
 # Copy source code
@@ -29,17 +29,14 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.js ./server.js
 COPY --from=builder /app/install.js ./install.js
 
-# Create data directory and set permissions for non-root user
-RUN mkdir -p /app/data && chown -R node:node /app
+# Ensure data directory exists
+RUN mkdir -p /app/data
 
-# Switch to non-root user for security
-USER node
-
-# Expose the application port
+# EXPOSE PORT
 EXPOSE 3000
 
 # Volume for persistent data
 VOLUME ["/app/data"]
 
-# Start command
+# Start command (Running as default ROOT user to avoid permission issues)
 CMD ["sh", "-c", "node install.js && node server.js"]
