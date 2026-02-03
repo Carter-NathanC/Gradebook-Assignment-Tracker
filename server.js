@@ -6,6 +6,7 @@
   - HttpOnly Cookies (Security)
   - Atomic File Writes (Data Integrity)
   - Backup Endpoint
+  - Robust Payload Handling
 */
 
 import express from 'express';
@@ -36,7 +37,8 @@ const limiter = rateLimit({
 // Middleware
 app.use(limiter);
 app.use(cors());
-app.use(express.json());
+// Increased limit to prevent data loss on large saves
+app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 app.use(express.static(DIST_DIR));
 
@@ -44,6 +46,12 @@ app.use(express.static(DIST_DIR));
 const atomicWrite = (filePath, data) => {
     const tempFile = `${filePath}.tmp`;
     try {
+        // Ensure directory exists
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        
         fs.writeFileSync(tempFile, JSON.stringify(data, null, 2));
         fs.renameSync(tempFile, filePath);
         return true;
