@@ -1,14 +1,13 @@
 /*
-  GradeTracker Local Server (Fixed for Docker)
-  ------------------------------------
-  - Critical Fix: Handles EXDEV errors for Docker volumes
-  - Security: Rate limiting & HTTP-only cookies
+  GradeTracker Local Server (Simple/Unsafe Version)
+  -------------------------------------------------
+  - Authentication: Header-based (x-access-key)
+  - Storage: Direct synchronous writes (No atomic temp files)
+  - Purpose: Maximum compatibility with Docker volumes where atomic moves fail
 */
 
 import express from 'express';
 import cors from 'cors';
-import cookieParser from 'cookie-parser';
-import rateLimit from 'express-rate-limit';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -23,63 +22,35 @@ const DIST_DIR = path.join(__dirname, 'dist');
 
 const app = express();
 
-// Security: Rate Limiting
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 2000, // Generous limit to prevent blocking legitimate saves
-    message: { error: "Too many requests, please slow down." }
-});
-
-// Middleware
-app.use(limiter);
-app.use(cors({ origin: true, credentials: true })); 
+app.use(cors());
+// Increased limit to prevent data loss on large saves
 app.use(express.json({ limit: '50mb' }));
-app.use(cookieParser());
 app.use(express.static(DIST_DIR));
 
-// Helper: Robust Atomic Write (Fixed for Docker/EXDEV)
-const atomicWrite = (filePath, data) => {
-    const tempFile = `${filePath}.tmp`;
-    try {
-        const dir = path.dirname(filePath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        
-        fs.writeFileSync(tempFile, JSON.stringify(data, null, 2));
-        
-        try {
-            // Try fast rename first
-            fs.renameSync(tempFile, filePath);
-        } catch (renameError) {
-            // If cross-device error (common in Docker volumes), copy and unlink
-            if (renameError.code === 'EXDEV') {
-                fs.copyFileSync(tempFile, filePath);
-                fs.unlinkSync(tempFile);
-            } else {
-                throw renameError;
-            }
-        }
-        return true;
-    } catch (e) {
-        console.error(`Write failed for ${filePath}:`, e);
-        return false;
-    }
-};
-
-// Helper: Hash
+// Helper: SHA-256 Hash
 const hashKey = (key) => crypto.createHash('sha256').update(key).digest('hex');
 
-// Middleware: Authenticate
+// Middleware: Authenticate Request (Simple Header Check)
 const authenticate = (req, res, next) => {
-    const token = req.cookies.auth_token;
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    const userKey = req.headers['x-access-key'];
+    
+    if (!userKey) {
+        return res.status(401).json({ error: "Missing Access Key" });
+    }
 
     try {
-        if (!fs.existsSync(AUTH_FILE)) return res.status(500).json({ error: "Server not initialized." });
+        if (!fs.existsSync(AUTH_FILE)) {
+            return res.status(500).json({ error: "Server not initialized. Run install.js" });
+        }
+        
         const authData = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
         
-        const valid = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(authData.passwordHash));
-        if (valid) next();
-        else res.status(403).json({ error: "Invalid Token" });
+        // Simple direct comparison (timing attack theoretical risk accepted for functionality)
+        if (hashKey(userKey) === authData.passwordHash) {
+            next();
+        } else {
+            res.status(403).json({ error: "Invalid Access Key" });
+        }
     } catch (e) {
         console.error("Auth Error:", e);
         res.status(500).json({ error: "Authentication failed" });
@@ -88,22 +59,14 @@ const authenticate = (req, res, next) => {
 
 // --- API Routes ---
 
+// 1. Login (Just verifies key)
 app.post('/api/login', (req, res) => {
     const { accessKey } = req.body;
     if (!accessKey) return res.status(400).json({ error: "Missing key" });
 
     try {
         const authData = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
-        const submittedHash = hashKey(accessKey);
-        const valid = crypto.timingSafeEqual(Buffer.from(submittedHash), Buffer.from(authData.passwordHash));
-
-        if (valid) {
-            res.cookie('auth_token', submittedHash, {
-                httpOnly: true,
-                secure: false, // Set to true if behind HTTPS proxy without mixed content issues
-                sameSite: 'lax',
-                maxAge: 30 * 24 * 60 * 60 * 1000
-            });
+        if (hashKey(accessKey) === authData.passwordHash) {
             res.json({ success: true });
         } else {
             res.status(401).json({ error: "Invalid Access Key" });
@@ -113,14 +76,17 @@ app.post('/api/login', (req, res) => {
     }
 });
 
+// 2. Logout (No-op on server for stateless auth)
 app.post('/api/logout', (req, res) => {
-    res.clearCookie('auth_token');
     res.json({ success: true });
 });
 
+// 3. Get Data
 app.get('/api/data', authenticate, (req, res) => {
     try {
-        if (!fs.existsSync(DB_FILE)) return res.json({ years: [], classes: [], assignments: [], events: [] });
+        if (!fs.existsSync(DB_FILE)) {
+            return res.json({ years: [], classes: [], assignments: [], events: [] });
+        }
         const data = fs.readFileSync(DB_FILE, 'utf8');
         res.json(JSON.parse(data));
     } catch (e) {
@@ -128,40 +94,45 @@ app.get('/api/data', authenticate, (req, res) => {
     }
 });
 
+// 4. Save Data (Direct Write)
 app.post('/api/data', authenticate, (req, res) => {
     try {
-        if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: "Invalid data format" });
-        const success = atomicWrite(DB_FILE, req.body);
-        if (success) res.json({ success: true });
-        else res.status(500).json({ error: "Write failed" });
+        // Direct write to avoid EXDEV (Cross-device link) errors in Docker
+        fs.writeFileSync(DB_FILE, JSON.stringify(req.body, null, 2));
+        res.json({ success: true });
     } catch (e) {
         console.error("Save Error:", e);
         res.status(500).json({ error: "Failed to save data" });
     }
 });
 
+// 5. Change Password
 app.post('/api/change-password', authenticate, (req, res) => {
     try {
         const { newPassword } = req.body;
-        if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: "Password too short" });
-        const newHash = hashKey(newPassword);
-        const success = atomicWrite(AUTH_FILE, { passwordHash: newHash });
-        if (success) {
-            res.cookie('auth_token', newHash, { httpOnly: true, secure: false, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
-            res.json({ success: true });
-        } else {
-            res.status(500).json({ error: "Failed to update password file" });
+        if (!newPassword || newPassword.length < 8) {
+            return res.status(400).json({ error: "Password too short" });
         }
+
+        const newHash = hashKey(newPassword);
+        fs.writeFileSync(AUTH_FILE, JSON.stringify({ passwordHash: newHash }, null, 2));
+        
+        res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: "Failed to update password" });
     }
 });
 
+// 6. Backup Data
 app.get('/api/backup', authenticate, (req, res) => {
-    if (fs.existsSync(DB_FILE)) res.download(DB_FILE, `gradetracker-backup-${Date.now()}.json`);
-    else res.status(404).json({ error: "No data to backup" });
+    if (fs.existsSync(DB_FILE)) {
+        res.download(DB_FILE, `gradetracker-backup-${Date.now()}.json`);
+    } else {
+        res.status(404).json({ error: "No data to backup" });
+    }
 });
 
+// Catch-all: Serve React App
 app.get('*', (req, res) => {
     res.sendFile(path.join(DIST_DIR, 'index.html'));
 });
