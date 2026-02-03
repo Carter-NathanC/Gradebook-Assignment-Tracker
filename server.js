@@ -1,9 +1,8 @@
 /*
-  GradeTracker Local Server (Fixed)
+  GradeTracker Local Server (Fixed for Docker)
   ------------------------------------
-  - Rate Limiting: Relaxed to 2000 req/15min to prevent blocking saves
-  - Body Limit: 50mb
-  - Atomic Writes: Prevents data corruption
+  - Critical Fix: Handles EXDEV errors for Docker volumes
+  - Security: Rate limiting & HTTP-only cookies
 */
 
 import express from 'express';
@@ -24,21 +23,21 @@ const DIST_DIR = path.join(__dirname, 'dist');
 
 const app = express();
 
-// Security: Rate Limiting (Relaxed for single-user intensive use)
+// Security: Rate Limiting
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 2000, // Increased to 2000 to prevent blocking legitimate edits
+    max: 2000, // Generous limit to prevent blocking legitimate saves
     message: { error: "Too many requests, please slow down." }
 });
 
 // Middleware
 app.use(limiter);
-app.use(cors({ origin: true, credentials: true })); // Allow credentials
+app.use(cors({ origin: true, credentials: true })); 
 app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 app.use(express.static(DIST_DIR));
 
-// Helper: Atomic Write
+// Helper: Robust Atomic Write (Fixed for Docker/EXDEV)
 const atomicWrite = (filePath, data) => {
     const tempFile = `${filePath}.tmp`;
     try {
@@ -46,7 +45,19 @@ const atomicWrite = (filePath, data) => {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         
         fs.writeFileSync(tempFile, JSON.stringify(data, null, 2));
-        fs.renameSync(tempFile, filePath);
+        
+        try {
+            // Try fast rename first
+            fs.renameSync(tempFile, filePath);
+        } catch (renameError) {
+            // If cross-device error (common in Docker volumes), copy and unlink
+            if (renameError.code === 'EXDEV') {
+                fs.copyFileSync(tempFile, filePath);
+                fs.unlinkSync(tempFile);
+            } else {
+                throw renameError;
+            }
+        }
         return true;
     } catch (e) {
         console.error(`Write failed for ${filePath}:`, e);
@@ -60,13 +71,12 @@ const hashKey = (key) => crypto.createHash('sha256').update(key).digest('hex');
 // Middleware: Authenticate
 const authenticate = (req, res, next) => {
     const token = req.cookies.auth_token;
-    if (!token) return res.status(401).json({ error: "Unauthorized: No token" });
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
 
     try {
         if (!fs.existsSync(AUTH_FILE)) return res.status(500).json({ error: "Server not initialized." });
         const authData = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
         
-        // Constant time comparison
         const valid = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(authData.passwordHash));
         if (valid) next();
         else res.status(403).json({ error: "Invalid Token" });
@@ -90,7 +100,7 @@ app.post('/api/login', (req, res) => {
         if (valid) {
             res.cookie('auth_token', submittedHash, {
                 httpOnly: true,
-                secure: false, // Allow http for local Docker
+                secure: false, // Set to true if behind HTTPS proxy without mixed content issues
                 sameSite: 'lax',
                 maxAge: 30 * 24 * 60 * 60 * 1000
             });
@@ -125,6 +135,7 @@ app.post('/api/data', authenticate, (req, res) => {
         if (success) res.json({ success: true });
         else res.status(500).json({ error: "Write failed" });
     } catch (e) {
+        console.error("Save Error:", e);
         res.status(500).json({ error: "Failed to save data" });
     }
 });
