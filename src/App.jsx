@@ -13,6 +13,7 @@ import {
   - Fixed: Data persistence (Alerts on save fail)
   - Fixed: Daily Plan "Frozen List" Logic
   - Fixed: Visual Cues (Red/Blue) & Calendar Sum
+  - UX: Smoother number inputs (doesn't force 0 on backspace)
 */
 
 // --- CONSTANTS & DEFAULTS ---
@@ -116,7 +117,7 @@ const useApi = () => {
                 setIsAuthenticated(false); 
                 throw new Error("Unauthorized");
             }
-            if (!res.ok) throw new Error("Server Error");
+            if (!res.ok) throw new Error(`Server Error: ${res.status}`);
             return await res.json();
         } catch (e) { 
             console.error(e); 
@@ -153,7 +154,8 @@ const useApi = () => {
             const res = await apiCall('/data', 'POST', newData);
             if (!res.success) throw new Error("Save returned failure");
         } catch (e) {
-            alert("Error saving data! Changes have been reverted. Please check your connection.");
+            console.error("Save failed:", e);
+            alert("Error saving data! Changes reverted. Check connection.");
             setData(previousData); // Revert on failure
         }
     };
@@ -1030,7 +1032,8 @@ export default function GradeTracker() {
                            </div>
                            <div>
                                <label className="text-xs text-gray-500 dark:text-gray-400">Est Time (mins)</label>
-                               <input type="number" min="0" value={activeAssignment.estimatedTime || 0} onChange={e => setActiveAssignment({...activeAssignment, estimatedTime: parseInt(e.target.value) || 0})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white"/>
+                               {/* FIX: Allow empty string to prevent resetting to 0 while typing */}
+                               <input type="number" min="0" value={activeAssignment.estimatedTime === 0 ? 0 : (activeAssignment.estimatedTime || '')} onChange={e => setActiveAssignment({...activeAssignment, estimatedTime: e.target.value === '' ? '' : parseInt(e.target.value)})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white"/>
                            </div>
                        </div>
                        <div className="flex justify-between pt-4 border-t dark:border-slate-700 mt-4">
@@ -1040,7 +1043,9 @@ export default function GradeTracker() {
                                toggleModal('edit', false);
                            }} className="text-red-500 text-sm flex items-center gap-1 hover:text-red-600"><Trash2 size={16}/> Delete</button>
                            <button onClick={() => {
-                               const newAsg = data.assignments.map(a => a.id === activeAssignment.id ? activeAssignment : a);
+                               // Sanitize before saving: ensure estimatedTime is a number
+                               const sanitized = {...activeAssignment, estimatedTime: activeAssignment.estimatedTime === '' ? 0 : (parseInt(activeAssignment.estimatedTime) || 0)};
+                               const newAsg = data.assignments.map(a => a.id === activeAssignment.id ? sanitized : a);
                                saveData({ assignments: newAsg });
                                toggleModal('edit', false);
                            }} className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 transition-colors">Save Changes</button>
