@@ -45,7 +45,7 @@ const authenticate = (req, res, next) => {
         
         const authData = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
         
-        // Simple direct comparison (timing attack theoretical risk accepted for functionality)
+        // Simple direct comparison
         if (hashKey(userKey) === authData.passwordHash) {
             next();
         } else {
