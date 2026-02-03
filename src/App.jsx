@@ -10,8 +10,8 @@ import {
 
 /* GRADE TRACKER FRONTEND
   ---------------------------------
-  - Auth: LocalStorage + Header (Unsafe but reliable)
-  - Features: Smart Daily Plan, 7-Day Scope, Visual Cues
+  - Auth: LocalStorage + Header (Simple/Unsafe)
+  - Features: Smart Daily Plan, 7-Day Scope, Visual Cues, Input Fixes
 */
 
 // --- CONSTANTS & DEFAULTS ---
@@ -71,6 +71,7 @@ const isActive = (status) => {
 
 const getWeekRange = () => {
     const now = new Date();
+    // Use local time for date strings
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
@@ -164,7 +165,6 @@ const useApi = () => {
     };
 
     const login = async (key) => {
-        // Just verify key
         try {
             const res = await fetch('/api/login', {
                 method: 'POST',
@@ -175,8 +175,8 @@ const useApi = () => {
             if (json.success) {
                 localStorage.setItem('gt_access_key', key);
                 setAccessKey(key);
-                // Need to reload data with new key
-                setTimeout(() => window.location.reload(), 100); 
+                // Trigger reload to clear outdated states
+                setTimeout(() => window.location.reload(), 50); 
             } else {
                 alert("Invalid Key");
             }
@@ -279,7 +279,7 @@ const useDailyPlan = (assignments, classes) => {
 
         const generatePlan = () => {
             const { today, tomorrowStr, nextWeekStr } = getWeekRange();
-            const stored = localStorage.getItem('gt_daily_plan_v5'); // Bumped version
+            const stored = localStorage.getItem('gt_daily_plan_v5');
             let storedData = stored ? JSON.parse(stored) : null;
 
             const getImpact = (a) => {
