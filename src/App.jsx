@@ -10,10 +10,9 @@ import {
 
 /* GRADE TRACKER FRONTEND
   ---------------------------------
-  - Feature: "Today's Plan" (Daily Capacity Logic)
-  - Feature: 7-Day Workload Scope
-  - Feature: Visual Due Date cues (Red/Blue)
-  - Feature: Fixed Data Persistence for Estimated Time
+  - Fixed: Data persistence (Alerts on save fail)
+  - Fixed: Daily Plan "Frozen List" Logic
+  - Fixed: Visual Cues (Red/Blue) & Calendar Sum
 */
 
 // --- CONSTANTS & DEFAULTS ---
@@ -75,7 +74,7 @@ const isActive = (status) => {
 // Calculate Date Range for "Next 7 Days"
 const getWeekRange = () => {
     const now = new Date();
-    // Use local time for date strings to avoid timezone shift issues on "Today"
+    // Use local time for date strings
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
@@ -117,6 +116,7 @@ const useApi = () => {
                 setIsAuthenticated(false); 
                 throw new Error("Unauthorized");
             }
+            if (!res.ok) throw new Error("Server Error");
             return await res.json();
         } catch (e) { 
             console.error(e); 
@@ -144,9 +144,18 @@ const useApi = () => {
     };
 
     const saveData = async (updates) => {
+        // Optimistic Update
+        const previousData = { ...data };
         const newData = { ...data, ...updates };
-        setData(newData); // Optimistic update
-        await apiCall('/data', 'POST', newData);
+        setData(newData); 
+        
+        try {
+            const res = await apiCall('/data', 'POST', newData);
+            if (!res.success) throw new Error("Save returned failure");
+        } catch (e) {
+            alert("Error saving data! Changes have been reverted. Please check your connection.");
+            setData(previousData); // Revert on failure
+        }
     };
 
     const login = async (key) => {
@@ -248,7 +257,7 @@ const useDailyPlan = (assignments, classes) => {
 
         const generatePlan = () => {
             const { today, tomorrowStr, nextWeekStr } = getWeekRange();
-            const stored = localStorage.getItem('gt_daily_plan_v3');
+            const stored = localStorage.getItem('gt_daily_plan_v4');
             let storedData = stored ? JSON.parse(stored) : null;
 
             // Helper: Calculate Impact (Weight * Points)
@@ -263,21 +272,16 @@ const useDailyPlan = (assignments, classes) => {
                 return (parseFloat(a.total) || 0) * weight;
             };
 
-            // 1. Identify all active work due in Next 7 Days
             const activeAssignments = assignments.filter(a => {
                 if (!isActive(a.status)) return false;
-                // Inclusive range: Today <= Due <= Today+7
                 return a.dueDate >= today && a.dueDate <= nextWeekStr;
             });
 
-            // 2. Check for existing valid plan for TODAY
+            // If we have a stored plan for TODAY, use those IDs only (if they are still active)
             if (storedData && storedData.date === today) {
-                // Return only active items from the stored snapshot IDs
-                // This ensures completed items disappear, but NO new items appear.
                 const currentPlanIds = storedData.ids;
                 const items = assignments.filter(a => currentPlanIds.includes(a.id) && isActive(a.status));
                 
-                // Sort by Due Date, then Impact
                 items.sort((a,b) => {
                      if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
                      return getImpact(b) - getImpact(a);
@@ -286,25 +290,16 @@ const useDailyPlan = (assignments, classes) => {
                 return;
             }
 
-            // 3. Generate New Plan (If new day)
+            // Generate New Plan
             const totalWeekLoad = activeAssignments.length;
             const dailyQuota = Math.ceil(totalWeekLoad / 7) || 0;
-
-            // Priority 1: Due Tomorrow (User Request: "always finish what is due tomorrow first")
-            // Priority 2: Due Today or Overdue (Implicit logic: don't miss today's deadlines either)
-            // Priority 3: High Impact from backlog
 
             const mandatoryItems = activeAssignments.filter(a => a.dueDate <= tomorrowStr);
             const backlogItems = activeAssignments.filter(a => a.dueDate > tomorrowStr);
 
-            // Sort Backlog by Impact
             backlogItems.sort((a,b) => getImpact(b) - getImpact(a));
 
-            // Determine IDs for the snapshot
             let selectedIds = mandatoryItems.map(a => a.id);
-            
-            // If quota allows, pull from backlog
-            // We ignore quota if mandatory > quota (must show all due tomorrow/today)
             let slotsRemaining = dailyQuota - selectedIds.length;
             
             if (slotsRemaining > 0) {
@@ -313,7 +308,7 @@ const useDailyPlan = (assignments, classes) => {
             }
 
             // Save Snapshot
-            localStorage.setItem('gt_daily_plan_v3', JSON.stringify({
+            localStorage.setItem('gt_daily_plan_v4', JSON.stringify({
                 date: today,
                 ids: selectedIds
             }));
@@ -328,7 +323,7 @@ const useDailyPlan = (assignments, classes) => {
         };
 
         generatePlan();
-    }, [assignments, classes]); 
+    }, [assignments, classes]); // Updates when assignments change (e.g., status changes)
 
     return plan;
 };
@@ -408,10 +403,12 @@ const DashboardView = ({ classes, assignments, customStatuses, grades, gpa, dail
                          {visiblePlan.map(a => {
                                 const cls = classes.find(c => c.id === a.classId);
                                 const isToday = a.dueDate === today;
-                                // We check if it is explicitly tomorrow
+                                
                                 const tomorrowDate = new Date();
                                 tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-                                const isTomorrow = a.dueDate === tomorrowDate.toISOString().split('T')[0];
+                                // Ensure consistent YYYY-MM-DD local format comparison
+                                const tomorrowStr = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth()+1).padStart(2,'0')}-${String(tomorrowDate.getDate()).padStart(2,'0')}`;
+                                const isTomorrow = a.dueDate === tomorrowStr;
 
                                 const rowHighlight = isToday ? 'border-l-4 border-l-red-500 bg-red-50 dark:bg-red-900/10' : 
                                                      isTomorrow ? 'border-l-4 border-l-blue-500 bg-blue-50 dark:bg-blue-900/10' : 
@@ -532,11 +529,8 @@ const CalendarView = ({ assignments, events, onAddEvent, onDayClick }) => {
                     {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`} className="bg-white dark:bg-slate-800 min-h-[120px]"></div>)}
                     {Array.from({length: daysInMonth}).map((_,i)=>{
                         const d = i+1;
-                        // Use local time construction
                         const cellDate = new Date(year, month, d);
-                        const monthStr = String(month + 1).padStart(2, '0');
-                        const dayStr = String(d).padStart(2, '0');
-                        const dateStr = `${year}-${monthStr}-${dayStr}`;
+                        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
                         const dayAssignments = assignments.filter(a=>a.dueDate===dateStr);
                         const dayEvents = events.filter(e=>e.date===dateStr);
@@ -571,7 +565,7 @@ const CalendarView = ({ assignments, events, onAddEvent, onDayClick }) => {
     );
 };
 
-// 4. Report View
+// 4. Report View (Unchanged but included for completeness)
 const ReportView = ({ assignments, customStatuses, classes, gpa }) => {
     const relevantAssignments = assignments.filter(a => {
         const today = new Date().toISOString().split('T')[0];
@@ -737,20 +731,16 @@ export default function GradeTracker() {
   const { isAuthenticated, loading, data, saveData, login, logout, apiCall } = useApi();
   const { isDark, toggle: toggleTheme } = useTheme();
   
-  // Derived State
   const { grades, gpa } = useGrading(data.classes, data.assignments, data.customStatuses);
   
-  // New Hook for Daily Plan
   const dailyPlan = useDailyPlan(data.assignments, data.classes);
 
-  // UI State
   const [view, setView] = useState('DASHBOARD');
   const [activeClassId, setActiveClassId] = useState(null);
   const [authKeyInput, setAuthKeyInput] = useState("");
   const [activeAssignment, setActiveAssignment] = useState(null);
-  const [selectedDayItems, setSelectedDayItems] = useState(null); // Calendar Drill down
+  const [selectedDayItems, setSelectedDayItems] = useState(null); 
   
-  // Modals
   const [modals, setModals] = useState({
       edit: false,
       addClass: false,
