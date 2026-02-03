@@ -10,10 +10,8 @@ import {
 
 /* GRADE TRACKER FRONTEND
   ---------------------------------
-  - Fixed: Data persistence (Alerts on save fail)
-  - Fixed: Daily Plan "Frozen List" Logic
-  - Fixed: Visual Cues (Red/Blue) & Calendar Sum
-  - UX: Smoother number inputs (doesn't force 0 on backspace)
+  - Auth: LocalStorage + Header (Unsafe but reliable)
+  - Features: Smart Daily Plan, 7-Day Scope, Visual Cues
 */
 
 // --- CONSTANTS & DEFAULTS ---
@@ -67,15 +65,12 @@ const formatTime = (mins) => {
     return `${m}m`;
 };
 
-// Check if an assignment is considered "Active" (Not turned in or graded)
 const isActive = (status) => {
     return status !== 'TURNED_IN' && status !== 'GRADED';
 };
 
-// Calculate Date Range for "Next 7 Days"
 const getWeekRange = () => {
     const now = new Date();
-    // Use local time for date strings
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
@@ -95,6 +90,8 @@ const getWeekRange = () => {
 // --- HOOKS ---
 
 const useApi = () => {
+    // Unsafe Auth: Load from LocalStorage directly
+    const [accessKey, setAccessKey] = useState(localStorage.getItem('gt_access_key') || '');
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [loading, setLoading] = useState(true);
     const [data, setData] = useState({
@@ -106,7 +103,10 @@ const useApi = () => {
     });
 
     const apiCall = async (endpoint, method = 'GET', body = null) => {
-        const headers = { 'Content-Type': 'application/json' };
+        const headers = { 
+            'Content-Type': 'application/json',
+            'x-access-key': accessKey // Send key in header
+        };
         try {
             const res = await fetch(`/api${endpoint}`, { 
                 method, 
@@ -126,6 +126,10 @@ const useApi = () => {
     };
 
     const loadData = async () => {
+        if (!accessKey) {
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         try {
             const res = await apiCall('/data');
@@ -145,10 +149,9 @@ const useApi = () => {
     };
 
     const saveData = async (updates) => {
-        // Optimistic Update
         const previousData = { ...data };
         const newData = { ...data, ...updates };
-        setData(newData); 
+        setData(newData); // Optimistic
         
         try {
             const res = await apiCall('/data', 'POST', newData);
@@ -156,21 +159,39 @@ const useApi = () => {
         } catch (e) {
             console.error("Save failed:", e);
             alert("Error saving data! Changes reverted. Check connection.");
-            setData(previousData); // Revert on failure
+            setData(previousData);
         }
     };
 
     const login = async (key) => {
-        await apiCall('/login', 'POST', { accessKey: key });
-        await loadData();
+        // Just verify key
+        try {
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accessKey: key })
+            });
+            const json = await res.json();
+            if (json.success) {
+                localStorage.setItem('gt_access_key', key);
+                setAccessKey(key);
+                // Need to reload data with new key
+                setTimeout(() => window.location.reload(), 100); 
+            } else {
+                alert("Invalid Key");
+            }
+        } catch(e) {
+            alert("Login Failed");
+        }
     };
 
     const logout = async () => {
-        await apiCall('/logout', 'POST');
+        localStorage.removeItem('gt_access_key');
+        setAccessKey('');
         setIsAuthenticated(false);
     };
 
-    useEffect(() => { loadData(); }, []);
+    useEffect(() => { loadData(); }, [accessKey]);
 
     return { isAuthenticated, loading, data, saveData, login, logout, apiCall };
 };
@@ -250,7 +271,6 @@ const useGrading = (classes, assignments, customStatuses) => {
 };
 
 // Hook: Daily Plan Management
-// Logic: Snapshot specific items for "Today" based on load capacity, preventing churn.
 const useDailyPlan = (assignments, classes) => {
     const [plan, setPlan] = useState([]);
 
@@ -259,10 +279,9 @@ const useDailyPlan = (assignments, classes) => {
 
         const generatePlan = () => {
             const { today, tomorrowStr, nextWeekStr } = getWeekRange();
-            const stored = localStorage.getItem('gt_daily_plan_v4');
+            const stored = localStorage.getItem('gt_daily_plan_v5'); // Bumped version
             let storedData = stored ? JSON.parse(stored) : null;
 
-            // Helper: Calculate Impact (Weight * Points)
             const getImpact = (a) => {
                 const cls = classes.find(c => c.id === a.classId);
                 if (!cls) return 0;
@@ -279,7 +298,7 @@ const useDailyPlan = (assignments, classes) => {
                 return a.dueDate >= today && a.dueDate <= nextWeekStr;
             });
 
-            // If we have a stored plan for TODAY, use those IDs only (if they are still active)
+            // Use Stored Plan if valid for Today
             if (storedData && storedData.date === today) {
                 const currentPlanIds = storedData.ids;
                 const items = assignments.filter(a => currentPlanIds.includes(a.id) && isActive(a.status));
@@ -309,13 +328,11 @@ const useDailyPlan = (assignments, classes) => {
                 selectedIds = [...selectedIds, ...extras.map(a => a.id)];
             }
 
-            // Save Snapshot
-            localStorage.setItem('gt_daily_plan_v4', JSON.stringify({
+            localStorage.setItem('gt_daily_plan_v5', JSON.stringify({
                 date: today,
                 ids: selectedIds
             }));
 
-            // Set State
             const finalItems = assignments.filter(a => selectedIds.includes(a.id) && isActive(a.status));
             finalItems.sort((a,b) => {
                  if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
@@ -325,7 +342,7 @@ const useDailyPlan = (assignments, classes) => {
         };
 
         generatePlan();
-    }, [assignments, classes]); // Updates when assignments change (e.g., status changes)
+    }, [assignments, classes]);
 
     return plan;
 };
@@ -359,14 +376,10 @@ const DashboardView = ({ classes, assignments, customStatuses, grades, gpa, dail
     const [searchTerm, setSearchTerm] = useState("");
     const { today, nextWeekStr } = getWeekRange();
 
-    // Stats Logic (Scoped to Next 7 Days)
     const next7DaysAssignments = assignments.filter(a => {
         return isActive(a.status) && a.dueDate >= today && a.dueDate <= nextWeekStr;
     });
 
-    const pendingMinutes = next7DaysAssignments.reduce((acc,a)=>acc+(parseInt(a.estimatedTime)||0),0);
-    
-    // Filter Daily Plan for Search
     const visiblePlan = dailyPlan.filter(a => {
         if (searchTerm && !a.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
         return true;
@@ -408,8 +421,7 @@ const DashboardView = ({ classes, assignments, customStatuses, grades, gpa, dail
                                 
                                 const tomorrowDate = new Date();
                                 tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-                                // Ensure consistent YYYY-MM-DD local format comparison
-                                const tomorrowStr = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth()+1).padStart(2,'0')}-${String(tomorrowDate.getDate()).padStart(2,'0')}`;
+                                const tomorrowStr = tomorrowDate.toISOString().split('T')[0];
                                 const isTomorrow = a.dueDate === tomorrowStr;
 
                                 const rowHighlight = isToday ? 'border-l-4 border-l-red-500 bg-red-50 dark:bg-red-900/10' : 
@@ -567,7 +579,7 @@ const CalendarView = ({ assignments, events, onAddEvent, onDayClick }) => {
     );
 };
 
-// 4. Report View (Unchanged but included for completeness)
+// 4. Report View
 const ReportView = ({ assignments, customStatuses, classes, gpa }) => {
     const relevantAssignments = assignments.filter(a => {
         const today = new Date().toISOString().split('T')[0];
@@ -1032,7 +1044,6 @@ export default function GradeTracker() {
                            </div>
                            <div>
                                <label className="text-xs text-gray-500 dark:text-gray-400">Est Time (mins)</label>
-                               {/* FIX: Allow empty string to prevent resetting to 0 while typing */}
                                <input type="number" min="0" value={activeAssignment.estimatedTime === 0 ? 0 : (activeAssignment.estimatedTime || '')} onChange={e => setActiveAssignment({...activeAssignment, estimatedTime: e.target.value === '' ? '' : parseInt(e.target.value)})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white"/>
                            </div>
                        </div>
