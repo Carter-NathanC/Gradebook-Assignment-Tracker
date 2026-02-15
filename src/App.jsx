@@ -12,6 +12,7 @@ import {
   ---------------------------------
   - Auth: LocalStorage + Header (Simple/Unsafe)
   - Features: Smart Daily Plan, 7-Day Scope, Visual Cues, Input Fixes
+  - UI: Restored Full Class Settings Modal (Tabs, Scales, Categories)
 */
 
 // --- CONSTANTS & DEFAULTS ---
@@ -71,7 +72,6 @@ const isActive = (status) => {
 
 const getWeekRange = () => {
     const now = new Date();
-    // Use local time for date strings
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
@@ -91,7 +91,6 @@ const getWeekRange = () => {
 // --- HOOKS ---
 
 const useApi = () => {
-    // Unsafe Auth: Load from LocalStorage directly
     const [accessKey, setAccessKey] = useState(localStorage.getItem('gt_access_key') || '');
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -106,7 +105,7 @@ const useApi = () => {
     const apiCall = async (endpoint, method = 'GET', body = null) => {
         const headers = { 
             'Content-Type': 'application/json',
-            'x-access-key': accessKey // Send key in header
+            'x-access-key': accessKey
         };
         try {
             const res = await fetch(`/api${endpoint}`, { 
@@ -152,7 +151,7 @@ const useApi = () => {
     const saveData = async (updates) => {
         const previousData = { ...data };
         const newData = { ...data, ...updates };
-        setData(newData); // Optimistic
+        setData(newData); 
         
         try {
             const res = await apiCall('/data', 'POST', newData);
@@ -175,7 +174,6 @@ const useApi = () => {
             if (json.success) {
                 localStorage.setItem('gt_access_key', key);
                 setAccessKey(key);
-                // Trigger reload to clear outdated states
                 setTimeout(() => window.location.reload(), 50); 
             } else {
                 alert("Invalid Key");
@@ -270,7 +268,6 @@ const useGrading = (classes, assignments, customStatuses) => {
     }, [classes, assignments, customStatuses]);
 };
 
-// Hook: Daily Plan Management
 const useDailyPlan = (assignments, classes) => {
     const [plan, setPlan] = useState([]);
 
@@ -298,7 +295,6 @@ const useDailyPlan = (assignments, classes) => {
                 return a.dueDate >= today && a.dueDate <= nextWeekStr;
             });
 
-            // Use Stored Plan if valid for Today
             if (storedData && storedData.date === today) {
                 const currentPlanIds = storedData.ids;
                 const items = assignments.filter(a => currentPlanIds.includes(a.id) && isActive(a.status));
@@ -311,7 +307,6 @@ const useDailyPlan = (assignments, classes) => {
                 return;
             }
 
-            // Generate New Plan
             const totalWeekLoad = activeAssignments.length;
             const dailyQuota = Math.ceil(totalWeekLoad / 7) || 0;
 
@@ -369,6 +364,145 @@ const Card = ({ children, className = "", onClick }) => (
 const Badge = ({ status, customStatuses }) => {
   const config = customStatuses.find(s => s.id === status) || DEFAULT_STATUSES[0];
   return <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase ${config.color}`}>{config.label}</span>;
+};
+
+// --- MODAL COMPONENT (Restored Complex Version) ---
+const ClassSettingsModal = ({ classId, classes, onSave, onClose, onDelete }) => {
+    const cls = classes.find(c => c.id === classId);
+    if (!cls) return null;
+    const [localSettings, setLocalSettings] = useState({
+        ...cls, 
+        gradingScale: cls.gradingScale || DEFAULT_GRADING_SCALE,
+        categories: cls.categories || [{name: 'Homework', weight: 0, defaultTime: 30}],
+        rules: cls.rules || []
+    });
+    const [tab, setTab] = useState('GENERAL');
+
+    const addCategory = () => setLocalSettings({...localSettings, categories: [...(localSettings.categories||[]), {name: 'New', weight: 0, defaultTime: 30}]});
+    const updateCat = (i, f, v) => {
+        const cats = [...localSettings.categories]; cats[i][f] = v;
+        setLocalSettings({...localSettings, categories: cats});
+    };
+    const removeCat = (i) => setLocalSettings({...localSettings, categories: localSettings.categories.filter((_, idx) => idx !== i)});
+    
+    const updateScale = (i, f, v) => {
+        const sc = [...localSettings.gradingScale]; sc[i][f] = v;
+        setLocalSettings({...localSettings, gradingScale: sc});
+    };
+    
+    const addRule = () => setLocalSettings({...localSettings, rules: [...(localSettings.rules||[]), {type: 'DROP_LOWEST', count: 1, category: localSettings.categories?.[0]?.name || 'Homework'}]});
+    const updateRule = (i, f, v) => {
+        const rs = [...localSettings.rules]; rs[i][f] = v;
+        setLocalSettings({...localSettings, rules: rs});
+    };
+    const removeRule = (i) => setLocalSettings({...localSettings, rules: localSettings.rules.filter((_, idx) => idx !== i)});
+
+    return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-800 w-full max-w-3xl rounded-xl shadow-xl flex flex-col max-h-[90vh] border dark:border-slate-700">
+                <div className="p-4 border-b dark:border-slate-700 flex justify-between items-center bg-gray-50 dark:bg-slate-700 rounded-t-xl">
+                    <h3 className="font-bold text-lg text-gray-800 dark:text-white">Class Settings: {cls.name}</h3>
+                    <button onClick={onClose}><X size={20} className="text-gray-500 dark:text-gray-400"/></button>
+                </div>
+                <div className="flex border-b dark:border-slate-700 overflow-x-auto no-scrollbar">
+                    {['GENERAL', 'GRADING', 'SCALE', 'RULES', 'DANGER'].map(t => (
+                        <button key={t} onClick={()=>setTab(t)} className={`px-4 py-3 text-sm font-bold whitespace-nowrap transition-colors ${tab===t?'border-b-2 border-blue-600 text-blue-600 dark:text-blue-400':'text-gray-500 dark:text-gray-400'}`}>{t}</button>
+                    ))}
+                </div>
+                <div className="p-6 overflow-y-auto flex-1">
+                    {tab === 'GENERAL' && (
+                        <div className="space-y-4">
+                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300">Class Information</label>
+                            <input value={localSettings.name} onChange={e=>setLocalSettings({...localSettings, name: e.target.value})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white" placeholder="Class Name"/>
+                            <div className="grid grid-cols-2 gap-4">
+                                <input value={localSettings.code} onChange={e=>setLocalSettings({...localSettings, code: e.target.value})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white" placeholder="Code"/>
+                                <input value={localSettings.credits} onChange={e=>setLocalSettings({...localSettings, credits: e.target.value})} className="border dark:border-slate-600 p-2 w-full rounded dark:bg-slate-700 dark:text-white" placeholder="Credits" type="number" step="0.5"/>
+                            </div>
+                        </div>
+                    )}
+                    {tab === 'GRADING' && (
+                        <div className="space-y-6">
+                            <div className="flex gap-4">
+                                {['POINTS', 'WEIGHTED'].map(type => (
+                                    <button key={type} onClick={()=>setLocalSettings({...localSettings, gradingType: type})} 
+                                        className={`flex-1 p-3 rounded border text-center font-bold ${localSettings.gradingType===type ? 'bg-blue-50 dark:bg-blue-900/40 border-blue-600 text-blue-700 dark:text-blue-300' : 'border-gray-200 dark:border-slate-600 text-gray-500 dark:text-gray-400'}`}>
+                                        {type === 'POINTS' && "Total Points"}
+                                        {type === 'WEIGHTED' && "Weighted Categories"}
+                                    </button>
+                                ))}
+                            </div>
+                            
+                            <div className="bg-gray-50 dark:bg-slate-700 p-4 rounded border dark:border-slate-600">
+                                <div className="flex justify-between mb-2"><span className="font-bold text-sm text-gray-700 dark:text-gray-300">Categories & Defaults</span><button onClick={addCategory} className="text-blue-600 dark:text-blue-400 text-xs font-bold">+ ADD CATEGORY</button></div>
+                                <div className="space-y-2">
+                                    <div className="grid grid-cols-12 gap-2 text-[10px] font-bold text-gray-400 uppercase">
+                                        <div className="col-span-6">Name</div>
+                                        <div className="col-span-2 text-center">Weight %</div>
+                                        <div className="col-span-3 text-center">Default Time</div>
+                                        <div className="col-span-1"></div>
+                                    </div>
+                                    {localSettings.categories?.map((cat, i) => (
+                                        <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                                            <input value={cat.name} onChange={e=>updateCat(i, 'name', e.target.value)} className="col-span-6 border dark:border-slate-600 p-1 rounded text-sm dark:bg-slate-800 dark:text-white" placeholder="Name"/>
+                                            <input type="number" value={cat.weight} onChange={e=>updateCat(i, 'weight', e.target.value)} className="col-span-2 border dark:border-slate-600 p-1 rounded text-center text-sm dark:bg-slate-800 dark:text-white" disabled={localSettings.gradingType !== 'WEIGHTED'}/>
+                                            <div className="col-span-3 flex items-center gap-1">
+                                                <input type="number" value={cat.defaultTime} onChange={e=>updateCat(i, 'defaultTime', e.target.value)} className="border dark:border-slate-600 p-1 w-full rounded text-center text-sm dark:bg-slate-800 dark:text-white"/>
+                                                <span className="text-[10px] dark:text-gray-400">min</span>
+                                            </div>
+                                            <button onClick={()=>removeCat(i)} className="col-span-1 text-red-400 p-1 hover:text-red-600"><Trash2 size={16}/></button>
+                                        </div>
+                                    ))}
+                                </div>
+                                {localSettings.gradingType === 'WEIGHTED' && (
+                                    <div className="text-right text-xs font-bold text-gray-500 dark:text-gray-400 mt-2">Total Weight: {localSettings.categories?.reduce((a,b)=>a+(parseFloat(b.weight)||0),0)}%</div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                    {tab === 'SCALE' && (
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-3 gap-2 font-bold text-xs text-gray-400 uppercase"><div>Letter</div><div>Min %</div><div>GPA</div></div>
+                            {localSettings.gradingScale.map((s, i) => (
+                                <div key={i} className="grid grid-cols-3 gap-4">
+                                    <div className="p-2 bg-gray-100 dark:bg-slate-700 rounded text-center font-bold text-gray-700 dark:text-gray-300">{s.letter}</div>
+                                    <input type="number" value={s.min} onChange={e => updateScale(i, 'min', e.target.value)} className="p-2 border dark:border-slate-600 rounded dark:bg-slate-800 dark:text-white" />
+                                    <input type="number" value={s.gpa} onChange={e => updateScale(i, 'gpa', e.target.value)} className="p-2 border dark:border-slate-600 rounded dark:bg-slate-800 dark:text-white" step="0.1" />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {tab === 'RULES' && (
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-center"><p className="text-sm text-gray-500 dark:text-gray-400">Special Grading Rules</p><button onClick={addRule} className="text-blue-600 dark:text-blue-400 text-xs font-bold">+ ADD RULE</button></div>
+                            {localSettings.rules?.map((rule, i) => (
+                                <div key={i} className="bg-gray-50 dark:bg-slate-700 p-3 rounded border dark:border-slate-600 flex justify-between items-center">
+                                    <div className="flex items-center gap-2 text-sm dark:text-gray-300">
+                                        <span>Drop Lowest</span>
+                                        <input type="number" value={rule.count} onChange={e=>updateRule(i, 'count', e.target.value)} className="w-12 p-1 border dark:border-slate-600 rounded text-center dark:bg-slate-800 dark:text-white"/>
+                                        <span>from</span>
+                                        <select value={rule.category} onChange={e=>updateRule(i, 'category', e.target.value)} className="p-1 border dark:border-slate-600 rounded bg-white dark:bg-slate-800 dark:text-white">
+                                            {localSettings.categories?.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <button onClick={()=>removeRule(i)}><X size={16} className="text-gray-400 hover:text-red-500"/></button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {tab === 'DANGER' && (
+                        <div className="bg-red-50 dark:bg-red-900/20 p-6 rounded text-center border border-red-100 dark:border-red-900">
+                            <h4 className="text-red-800 dark:text-red-400 font-bold mb-2">Delete Class</h4>
+                            <button onClick={()=>onDelete(localSettings.id)} className="bg-red-600 text-white px-6 py-2 rounded font-bold hover:bg-red-700">Delete Permanently</button>
+                        </div>
+                    )}
+                </div>
+                <div className="p-4 border-t dark:border-slate-700 flex justify-end gap-2 bg-gray-50 dark:bg-slate-700 rounded-b-xl">
+                    <button onClick={onClose} className="px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-600 rounded">Cancel</button>
+                    <button onClick={()=>onSave(localSettings)} className="px-6 py-2 bg-blue-600 text-white rounded font-bold shadow hover:bg-blue-700">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 // 1. Dashboard View
@@ -1104,22 +1238,19 @@ export default function GradeTracker() {
           </div>
       )}
 
-      {/* 6. Class Settings Modal */}
+      {/* 6. Class Settings Modal (Restored) */}
       {modals.classSettings && activeClassId && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-             <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-lg border dark:border-slate-700">
-                 <h3 className="font-bold text-lg mb-4 text-gray-800 dark:text-white">Class Settings</h3>
-                 <div className="space-y-4">
-                     <p className="text-sm text-gray-500 dark:text-gray-400">Detailed settings (Weights, Rules, Scales) are managed here.</p>
-                     <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded border border-red-100 dark:border-red-900">
-                        <button onClick={() => handleDeleteClass(activeClassId)} className="text-red-600 dark:text-red-400 font-bold text-sm w-full text-left">Delete Class</button>
-                     </div>
-                     <div className="flex justify-end gap-2">
-                         <button onClick={()=>toggleModal('classSettings', false)} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-400">Close</button>
-                     </div>
-                 </div>
-             </div>
-        </div>
+        <ClassSettingsModal 
+            classId={activeClassId} 
+            classes={data.classes}
+            onSave={(updatedClass) => {
+                const updatedClasses = data.classes.map(c => c.id === updatedClass.id ? updatedClass : c);
+                saveData({ classes: updatedClasses });
+                toggleModal('classSettings', false);
+            }}
+            onClose={() => toggleModal('classSettings', false)}
+            onDelete={handleDeleteClass}
+        />
       )}
 
     </div>
